@@ -24,7 +24,7 @@ def lookup_cik(ticker):
     for entry in data.values():
         if entry["ticker"].upper() == ticker:
             return str(entry["cik_str"]).zfill(10)
-    return None
+
 
 def get_accessions(cik, years_back):
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
@@ -82,7 +82,7 @@ Respond in table format without commentary.\n\n{text}"""
         return response.choices[0].message.content
     except Exception as e:
                 st.warning("⚠️ Skipped, no guidance found in filing.")
-        return None
+
 
 if st.button("🔍 Extract Guidance"):
     if not api_key:
