@@ -12,6 +12,7 @@ st.title("📄 SEC 8-K Guidance Extractor")
 
 # User inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
+years_back = st.number_input("How many years back to search for 8-K filings?", min_value=1, max_value=10, value=1)
 api_key = st.text_input("Enter OpenAI API Key", type="password")
 output_dir = "./"
 
@@ -88,7 +89,6 @@ if st.button("🔍 Extract Guidance"):
             st.error("CIK not found for ticker.")
         else:
             client = OpenAI(api_key=api_key)
-            years_back = st.number_input("How many years back to search for 8-K filings?", min_value=1, max_value=10, value=1)
             accessions = get_accessions_years_back(cik, years_back)
             links = get_ex99_1_links(cik, accessions)
             results = []
