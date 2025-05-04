@@ -99,7 +99,11 @@ if st.button("🔍 Extract Guidance"):
                     html = requests.get(url).text
                     text = BeautifulSoup(html, "html.parser").get_text()
                     table = extract_guidance(text, ticker, client)
+                    if not table or "|" not in table:
+                        st.info("⚠️ No valid guidance found in this filing. Skipping.")
+                        continue
                     if table and "|" in table:
+                        st.success("✅ Guidance found.")
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                         df["FilingDate"] = date_str
@@ -107,6 +111,7 @@ if st.button("🔍 Extract Guidance"):
                         results.append(df)
                 except:
                     st.warning(f"Could not process: {url}")
+                    continue
 
             if results:
                 combined = pd.concat(results, ignore_index=True)
@@ -116,3 +121,4 @@ if st.button("🔍 Extract Guidance"):
                     st.download_button("📥 Download Excel", f, file_name=f"{ticker}_guidance_1yr.xlsx")
             else:
                 st.warning("No guidance data extracted.")
+                st.info("Some filings may have been skipped if they contained no forward-looking guidance.")
