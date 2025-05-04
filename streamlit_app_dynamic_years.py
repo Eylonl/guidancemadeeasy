@@ -6,19 +6,20 @@ from datetime import datetime, timedelta
 from openai import OpenAI
 import pandas as pd
 import os
-import io
 
-st.set_page_config(page_title="SEC 8-K Guidance Extractor")
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
 st.title("📄 SEC 8-K Guidance Extractor")
 
+# Inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
 year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
 
+
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
-    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"})
+    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
     data = res.json()
     for entry in data.values():
         if entry["ticker"].upper() == ticker:
@@ -28,7 +29,7 @@ def lookup_cik(ticker):
 def get_accessions(cik, years_back):
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    resp = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"})
+    resp = requests.get(url, headers=headers)
     data = resp.json()
     filings = data["filings"]["recent"]
     accessions = []
@@ -51,7 +52,7 @@ def get_ex99_1_links(cik, accessions):
     for accession, date_str in accessions:
         base_folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/"
         index_url = base_folder + f"{accession}-index.htm"
-        res = requests.get(index_url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"})
+        res = requests.get(index_url, headers=headers)
         if res.status_code != 200:
             continue
         soup = BeautifulSoup(res.text, "html.parser")
@@ -72,17 +73,16 @@ Return a structured list containing:
 - applicable period (e.g. Q3 FY24, Full Year 2025)
 
 Respond in table format without commentary.\n\n{text}"""
-    st.subheader("📤 Prompt Sent to OpenAI")
-    with st.expander("Show Prompt"):
-        st.text_area("Prompt Preview", prompt, height=300)
-        st.download_button("💾 Download Prompt Text", prompt, file_name=f"{ticker}_prompt.txt")
-
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-    )
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"OpenAI API Error: {e}")
+        return None
 
 if st.button("🔍 Extract Guidance"):
     if not api_key:
@@ -95,7 +95,12 @@ if st.button("🔍 Extract Guidance"):
             client = OpenAI(api_key=api_key)
             if year_input.strip():
                 years_back = int(year_input.strip())
-                accessions = get_accessions(cik, years_back)
+                try:
+                    years_back = int(year_input)
+                    accessions = get_accessions(cik, years_back)
+                except:
+                    st.error("Invalid year input. Must be a number.")
+                    accessions = []
             else:
                 accessions = get_most_recent_accession(cik)
 
@@ -106,10 +111,10 @@ if st.button("🔍 Extract Guidance"):
                 st.write(f"📄 Processing {url}")
                 try:
                     html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
-                    text = "\n".join(s.strip() for s in BeautifulSoup(html, "html.parser").stripped_strings)
-                    fls_index = text.lower().find("forward-looking statements")
-                    if fls_index != -1:
-                        text = text[:fls_index]
+                    text = BeautifulSoup(html, "html.parser").get_text()
+                    forw_idx = text.lower().find("forward looking statements")
+                    if forw_idx != -1:
+                        text = text[:forw_idx]
                     table = extract_guidance(text, ticker, client)
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
@@ -117,11 +122,12 @@ if st.button("🔍 Extract Guidance"):
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
                         results.append(df)
-                except Exception as e:
-                    st.warning(f"Could not process: {url} — {e}")
+                except:
+                    st.warning(f"Could not process: {url}")
 
             if results:
                 combined = pd.concat(results, ignore_index=True)
+                import io
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
                 st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
