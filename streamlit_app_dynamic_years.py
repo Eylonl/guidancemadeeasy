@@ -81,6 +81,7 @@ Respond in table format without commentary.\n\n{text}"""
         )
         return response.choices[0].message.content
     except Exception as e:
+                st.warning("⚠️ Skipped, no guidance found in filing.")
         st.error(f"OpenAI API Error: {e}")
         return None
 
