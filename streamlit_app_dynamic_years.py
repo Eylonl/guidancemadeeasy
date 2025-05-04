@@ -124,6 +124,8 @@ if st.button("🔍 Extract Guidance"):
                         df["8K_Link"] = url
                         results.append(df)
                         st.success("✅ Guidance extracted from this 8-K.")
+                    else:
+                        st.warning("⚠️ Skipped, no guidance found in filing.")
                 except:
                     st.warning(f"Could not process: {url}")
 
