@@ -18,7 +18,7 @@ year_input = st.text_input("How many years back to search for 8-K filings? (Leav
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
-    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"})
     data = res.json()
     for entry in data.values():
         if entry["ticker"].upper() == ticker:
@@ -28,7 +28,7 @@ def lookup_cik(ticker):
 def get_accessions(cik, years_back):
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    resp = requests.get(url, headers=headers)
+    resp = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"})
     data = resp.json()
     filings = data["filings"]["recent"]
     accessions = []
@@ -51,7 +51,7 @@ def get_ex99_1_links(cik, accessions):
     for accession, date_str in accessions:
         base_folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/"
         index_url = base_folder + f"{accession}-index.htm"
-        res = requests.get(index_url, headers=headers)
+        res = requests.get(index_url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"})
         if res.status_code != 200:
             continue
         soup = BeautifulSoup(res.text, "html.parser")
@@ -105,7 +105,7 @@ if st.button("🔍 Extract Guidance"):
             for date_str, acc, url in links:
                 st.write(f"📄 Processing {url}")
                 try:
-                    html = requests.get(url).text
+                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
                     text = "\n".join(s.strip() for s in BeautifulSoup(html, "html.parser").stripped_strings)
                     table = extract_guidance(text, ticker, client)
                     if table and "|" in table:
