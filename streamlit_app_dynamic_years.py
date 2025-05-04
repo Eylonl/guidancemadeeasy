@@ -1,31 +1,126 @@
 
 import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 from openai import OpenAI
+import pandas as pd
+import os
+import io
 
-st.set_page_config(page_title="OpenAI API Diagnostic")
+st.set_page_config(page_title="SEC 8-K Guidance Extractor")
+st.title("📄 SEC 8-K Guidance Extractor")
 
-st.title("🧪 OpenAI API Connectivity Test")
+ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
 
-api_key = st.text_input("🔑 Enter your OpenAI API Key", type="password")
-prompt = st.text_area("💬 Prompt to send to GPT-4", "What is the capital of France?")
+@st.cache_data(show_spinner=False)
+def lookup_cik(ticker):
+    headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+    data = res.json()
+    for entry in data.values():
+        if entry["ticker"].upper() == ticker:
+            return str(entry["cik_str"]).zfill(10)
+    return None
 
-if st.button("🚀 Run Test"):
+def get_accessions(cik, years_back):
+    headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+    resp = requests.get(url, headers=headers)
+    data = resp.json()
+    filings = data["filings"]["recent"]
+    accessions = []
+    cutoff = datetime.today() - timedelta(days=365 * years_back)
+
+    for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+        if form == "8-K":
+            date = datetime.strptime(date_str, "%Y-%m-%d")
+            if date >= cutoff:
+                accessions.append((accession, date_str))
+    return accessions
+
+def get_most_recent_accession(cik):
+    all_recent = get_accessions(cik, 10)
+    return all_recent[:1] if all_recent else []
+
+def get_ex99_1_links(cik, accessions):
+    links = []
+    headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    for accession, date_str in accessions:
+        base_folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/"
+        index_url = base_folder + f"{accession}-index.htm"
+        res = requests.get(index_url, headers=headers)
+        if res.status_code != 200:
+            continue
+        soup = BeautifulSoup(res.text, "html.parser")
+        for row in soup.find_all("tr"):
+            if "99.1" in row.get_text().lower():
+                tds = row.find_all("td")
+                if len(tds) >= 3:
+                    filename = tds[2].text.strip()
+                    links.append((date_str, accession, base_folder + filename))
+                    break
+    return links
+
+def extract_guidance(text, ticker, client):
+    prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker}. 
+Return a structured list containing:
+- metric (e.g. Revenue, EPS, Operating Margin)
+- value or range (e.g. $1.5B–$1.6B or $2.05)
+- applicable period (e.g. Q3 FY24, Full Year 2025)
+
+Respond in table format without commentary.\n\n{text}"""
+    st.subheader("📤 Prompt Sent to OpenAI")
+    with st.expander("Show Prompt"):
+        st.text_area("Prompt Preview", prompt, height=300)
+        st.download_button("💾 Download Prompt Text", prompt, file_name=f"{ticker}_prompt.txt")
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
+    return response.choices[0].message.content
+
+if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
     else:
-        try:
-            st.info("🔧 Initializing OpenAI client...")
+        cik = lookup_cik(ticker)
+        if not cik:
+            st.error("CIK not found for ticker.")
+        else:
             client = OpenAI(api_key=api_key)
+            if year_input.strip():
+                years_back = int(year_input.strip())
+                accessions = get_accessions(cik, years_back)
+            else:
+                accessions = get_most_recent_accession(cik)
 
-            with st.spinner("⏳ Sending request to GPT-4..."):
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3
-                )
-                output = response.choices[0].message.content
-                st.success("✅ GPT-4 responded successfully!")
-                st.text_area("📥 GPT-4 Output", output, height=200)
+            links = get_ex99_1_links(cik, accessions)
+            results = []
 
-        except Exception as e:
-            st.error(f"❌ OpenAI API Error: {e}")
+            for date_str, acc, url in links:
+                st.write(f"📄 Processing {url}")
+                try:
+                    html = requests.get(url).text
+                    text = "\n".join(s.strip() for s in BeautifulSoup(html, "html.parser").stripped_strings)
+                    table = extract_guidance(text, ticker, client)
+                    if table and "|" in table:
+                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                        df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                        df["FilingDate"] = date_str
+                        df["8K_Link"] = url
+                        results.append(df)
+                except Exception as e:
+                    st.warning(f"Could not process: {url} — {e}")
+
+            if results:
+                combined = pd.concat(results, ignore_index=True)
+                excel_buffer = io.BytesIO()
+                combined.to_excel(excel_buffer, index=False)
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("No guidance data extracted.")
