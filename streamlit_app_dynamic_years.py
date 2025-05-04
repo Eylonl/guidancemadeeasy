@@ -122,6 +122,7 @@ if st.button("🔍 Extract Guidance"):
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
                         results.append(df)
+                        st.success("✅ Guidance extracted from this 8-K.")
                 except:
                     st.warning(f"Could not process: {url}")
 
