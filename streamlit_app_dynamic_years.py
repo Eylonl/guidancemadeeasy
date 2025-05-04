@@ -107,6 +107,9 @@ if st.button("🔍 Extract Guidance"):
                 try:
                     html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
                     text = "\n".join(s.strip() for s in BeautifulSoup(html, "html.parser").stripped_strings)
+                    fls_index = text.lower().find("forward-looking statements")
+                    if fls_index != -1:
+                        text = text[:fls_index]
                     table = extract_guidance(text, ticker, client)
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
