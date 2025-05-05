@@ -8,115 +8,49 @@ import os
 import re
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
-number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB%]|million|billion|percent)?'
+number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
 
 def extract_number(token: str):
-    """Extract numeric value from string, with detection for percentages."""
     if not token or not isinstance(token, str):
         return None
-    neg = token.strip().startswith('(') and token.strip().endswith(')')
-    
-    # Check for percentage before removing characters
-    is_percent = '%' in token or 'percent' in token.lower()
-    
+    neg = token.strip().startswith('(') and token.strip().endswith(')' )
     tok = token.replace('(', '').replace(')', '').replace('$','') \
                .replace(',', '').strip().lower()
-    
-    # Remove percentage symbol but keep track that it was a percentage
-    if tok.endswith('%'):
-        tok = tok[:-1].strip()
-    elif tok.endswith('percent'):
-        tok = tok[:-7].strip()
-    
     factor = 1.0
     if tok.endswith('billion'): tok, factor = tok[:-7].strip(), 1000
     elif tok.endswith('million'): tok, factor = tok[:-7].strip(), 1
     elif tok.endswith('b'): tok, factor = tok[:-1].strip(), 1000
     elif tok.endswith('m'): tok, factor = tok[:-1].strip(), 1
     elif tok.endswith('k'): tok, factor = tok[:-1].strip(), 0.001
-    
     try:
         val = float(tok) * factor
-        if is_percent:
-            return (-val if neg else val, True)  # Return tuple with flag for percentage
         return -val if neg else val
     except:
         return None
 
 
 def format_percent(val):
-    """Format value, adding % symbol for percentages."""
     if val is None:
         return None
-    
-    # Check if val is a tuple with percentage flag
-    if isinstance(val, tuple) and len(val) == 2:
-        value, is_percent = val
-        if is_percent:
-            return f"{value:.1f}%"
-        return f"{value:.1f}"
-    
-    # Handle regular numeric values (backward compatibility)
     if isinstance(val, (int, float)):
-        return f"{val:.1f}"
-    
+        return f"{val:.1f}%"
     return val
 
-
 def parse_value_range(text: str):
-    """Parse a value range from text, handling percentages properly."""
     if not isinstance(text, str):
         return (None, None, None)
-    
-    # Check if the text represents "flat" or "unchanged"
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
-        return ((0.0, False), (0.0, False), (0.0, False))
-    
-    # Check if the entire text suggests percentages
-    text_is_percent = '%' in text or re.search(r'\bpercent\b', text, re.I)
-    
-    # Look for range pattern (e.g., "5-10%")
+        return (0.0, 0.0, 0.0)
     rng = re.search(fr'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
     if rng:
-        lo_extracted = extract_number(rng.group(1))
-        hi_extracted = extract_number(rng.group(2))
-        
-        # Process the extracted values
-        if lo_extracted is not None and hi_extracted is not None:
-            # Handle both tuple and non-tuple formats
-            if isinstance(lo_extracted, tuple):
-                lo_val, lo_is_percent = lo_extracted
-            else:
-                lo_val, lo_is_percent = lo_extracted, text_is_percent
-                
-            if isinstance(hi_extracted, tuple):
-                hi_val, hi_is_percent = hi_extracted
-            else:
-                hi_val, hi_is_percent = hi_extracted, text_is_percent
-            
-            # If either value is a percentage, treat both as percentages
-            combined_is_percent = lo_is_percent or hi_is_percent
-            
-            lo = (lo_val, combined_is_percent)
-            hi = (hi_val, combined_is_percent)
-            avg = ((lo_val + hi_val) / 2, combined_is_percent)
-            
-            return (lo, hi, avg)
-    
-    # Look for a single value (e.g., "5%")
+        lo = extract_number(rng.group(1))
+        hi = extract_number(rng.group(2))
+        avg = (lo+hi)/2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
     single = re.search(number_token, text, re.I)
     if single:
-        extracted = extract_number(single.group(0))
-        if extracted is not None:
-            # Handle both tuple and non-tuple formats
-            if isinstance(extracted, tuple):
-                v_val, v_is_percent = extracted
-            else:
-                v_val, v_is_percent = extracted, text_is_percent
-                
-            v = (v_val, v_is_percent)
-            return (v, v, v)
-    
+        v = extract_number(single.group(0))
+        return (v, v, v)
     return (None, None, None)
 
 
@@ -180,10 +114,15 @@ def get_ex99_1_links(cik, accessions):
 
 def extract_guidance(text, ticker, client):
     prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker}. 
+
 Return a structured list containing:
 - metric (e.g. Revenue, EPS, Operating Margin)
 - value or range (e.g. $1.5B–$1.6B or $2.05)
 - applicable period (e.g. Q3 FY24, Full Year 2025)
+
+VERY IMPORTANT: For any percentage values, always include the % symbol in your output:
+- If the guidance mentions "operating margin of 5 to 7 percent", output it as "5% to 7%" or "5%-7%"
+- If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
 
 Respond in table format without commentary.\n\n{text}"""
     try:
@@ -217,11 +156,7 @@ def split_gaap_non_gaap(df):
                 new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
                 rows.append(new_row)
         else:
-            # Handle regular rows with proper percentage formatting
-            new_row = row.copy()
-            lo, hi, avg = parse_value_range(row['Value'])
-            new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
-            rows.append(new_row)
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
