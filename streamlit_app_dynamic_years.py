@@ -212,8 +212,11 @@ def parse_value_range(text: str):
 
 def correct_value_signs(df):
     """
-    Comprehensive function to ensure the sign (positive/negative) of values 
+    Improved function to ensure the sign (positive/negative) of values 
     is correctly applied based on the context in the original text.
+    
+    This version is more cautious about applying negative signs and includes
+    better detection of explicitly positive values.
     """
     if 'Value' not in df.columns:
         return df  # Skip if Value column is missing
@@ -221,72 +224,117 @@ def correct_value_signs(df):
     for idx, row in df.iterrows():
         value_text = str(row.get('Value', ''))
         
-        # Determine if the value should be negative based on text
-        should_be_negative = (
-            # Check for explicit negative indicators
-            '(' in value_text and ')' in value_text or  # Parenthetical notation
-            '-' in value_text or                      # Explicit minus sign
-            re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', value_text, re.I) or  # Negative words
-            # Check the metric name
-            any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease'])
+        # Extract actual numeric representations in the value text for direct analysis
+        numeric_pattern = re.search(r'(-?\$?\s*\d+(?:,\d+)*(?:\.\d+)?|\(\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?\s*\))', value_text)
+        numeric_repr = numeric_pattern.group(0) if numeric_pattern else ""
+        
+        # Determine if the value is explicitly represented as negative
+        is_explicitly_negative = (
+            # Check for parenthetical notation with a number
+            (numeric_repr.startswith('(') and numeric_repr.endswith(')') and re.search(r'\(\s*\$?\s*\d', numeric_repr)) or
+            # Check for explicit minus sign before a number
+            (numeric_repr.startswith('-') and re.search(r'-\s*\$?\s*\d', numeric_repr))
         )
         
-        # Determine if the value should be positive based on text
-        should_be_positive = (
-            # Check for lack of negative indicators
-            not should_be_negative and
-            # Check for explicit dollar sign without negative indicators
-            ('$' in value_text and not '($' in value_text and not '-$' in value_text)
+        # Look for explicit negative indicators in surrounding context
+        has_negative_context = (
+            # Only consider contextual words if the number itself isn't explicitly positive or negative
+            not is_explicitly_negative and
+            re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', value_text, re.I) and
+            # Make sure we don't have contradicting positive indicators
+            not re.search(r'\b(?:growth|increase|up|positive|profit)\b', value_text, re.I) and
+            # Check the metric name for clear negative terms
+            (any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease']))
         )
         
-        # Get low, high, and average values
+        # Determine if the value should be negative
+        should_be_negative = is_explicitly_negative or has_negative_context
+        
+        # Determine if the value is explicitly positive
+        is_explicitly_positive = (
+            # Check for dollar sign without negative indicators
+            ('$' in numeric_repr and not numeric_repr.startswith('-') and 
+             not (numeric_repr.startswith('(') and numeric_repr.endswith(')'))) or
+            # Check for a plain positive number
+            (re.search(r'^\d', numeric_repr.strip()) and not 
+             (numeric_repr.startswith('(') and numeric_repr.endswith(')')))
+        )
+        
+        # Look for explicit positive indicators in surrounding context
+        has_positive_context = (
+            not is_explicitly_negative and
+            re.search(r'\b(?:growth|increase|up|positive|profit|gain)\b', value_text, re.I) and
+            not re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', value_text, re.I)
+        )
+        
+        # Determine if the value should be positive
+        should_be_positive = is_explicitly_positive or has_positive_context
+        
+        # Resolve conflicts - if we have contradicting indicators, 
+        # explicit representation in the number takes precedence
+        if should_be_negative and should_be_positive:
+            if is_explicitly_negative:
+                should_be_positive = False
+            elif is_explicitly_positive:
+                should_be_negative = False
+            else:
+                # If no explicit indicators in the numeric representation,
+                # default to keeping the value as-is (don't change sign)
+                should_be_negative = False
+                should_be_positive = False
+        
+        # Apply corrections to Low, High, Average columns
         for col in ['Low', 'High', 'Average']:
-            if col not in df.columns or row.get(col) is None:
+            if col not in df.columns or pd.isnull(row.get(col)):
                 continue
                 
             val = row[col]
             
+            # Skip if the value is already null
+            if val is None:
+                continue
+                
             # Convert to numeric for comparison if it's a string
             if isinstance(val, str):
                 # Extract numeric value from string
                 try:
                     val_numeric = float(re.sub(r'[^\d.-]', '', val))
-                except:
+                    
+                    # Only fix values that have the wrong sign based on our determination
+                    if should_be_negative and val_numeric > 0:
+                        # Value should be negative but is positive
+                        if '%' in val:
+                            df.at[idx, col] = f"-{abs(val_numeric):.1f}%"
+                        elif '$' in val:
+                            if abs(val_numeric) >= 100:
+                                df.at[idx, col] = f"-${abs(val_numeric):.0f}"
+                            elif abs(val_numeric) >= 10:
+                                df.at[idx, col] = f"-${abs(val_numeric):.1f}"
+                            else:
+                                df.at[idx, col] = f"-${abs(val_numeric):.2f}"
+                        else:
+                            # Just a number
+                            df.at[idx, col] = f"-{abs(val_numeric)}"
+                            
+                    elif should_be_positive and val_numeric < 0:
+                        # Value should be positive but is negative
+                        if '%' in val:
+                            df.at[idx, col] = f"{abs(val_numeric):.1f}%"
+                        elif '$' in val:
+                            if abs(val_numeric) >= 100:
+                                df.at[idx, col] = f"${abs(val_numeric):.0f}"
+                            elif abs(val_numeric) >= 10:
+                                df.at[idx, col] = f"${abs(val_numeric):.1f}"
+                            else:
+                                df.at[idx, col] = f"${abs(val_numeric):.2f}"
+                        else:
+                            # Just a number
+                            df.at[idx, col] = f"{abs(val_numeric)}"
+                except ValueError:
                     continue
-                
-                # Fix incorrect signs
-                if should_be_negative and val_numeric > 0:
-                    # Value should be negative but is positive
-                    if '%' in val:
-                        df.at[idx, col] = f"-{abs(val_numeric):.1f}%"
-                    elif '$' in val:
-                        if abs(val_numeric) >= 100:
-                            df.at[idx, col] = f"-${abs(val_numeric):.0f}"
-                        elif abs(val_numeric) >= 10:
-                            df.at[idx, col] = f"-${abs(val_numeric):.1f}"
-                        else:
-                            df.at[idx, col] = f"-${abs(val_numeric):.2f}"
-                    else:
-                        # Just a number
-                        df.at[idx, col] = f"-{abs(val_numeric)}"
-                        
-                elif should_be_positive and val_numeric < 0:
-                    # Value should be positive but is negative
-                    if '%' in val:
-                        df.at[idx, col] = f"{abs(val_numeric):.1f}%"
-                    elif '$' in val:
-                        if abs(val_numeric) >= 100:
-                            df.at[idx, col] = f"${abs(val_numeric):.0f}"
-                        elif abs(val_numeric) >= 10:
-                            df.at[idx, col] = f"${abs(val_numeric):.1f}"
-                        else:
-                            df.at[idx, col] = f"${abs(val_numeric):.2f}"
-                    else:
-                        # Just a number
-                        df.at[idx, col] = f"{abs(val_numeric)}"
-                        
+                    
             else:  # Numeric value
-                # Fix incorrect signs
+                # Only fix values that have the wrong sign based on our determination
                 if should_be_negative and val > 0:
                     # Value should be negative but is positive
                     df.at[idx, col] = -abs(val)
@@ -299,39 +347,57 @@ def correct_value_signs(df):
 
 def check_range_consistency(df):
     """
-    Check for and fix inconsistencies in range parsing.
-    For example, if Low is negative but High is positive when both should be negative.
+    Improved function to check for and fix inconsistencies in range parsing.
+    More cautious about applying corrections to avoid false negatives.
     """
     for idx, row in df.iterrows():
         # Get low and high values if they exist
         low, high = row.get('Low'), row.get('High')
         
-        # Skip if either value is missing
-        if low is None or high is None:
+        # Skip if either value is missing or null
+        if low is None or high is None or pd.isnull(low) or pd.isnull(high):
             continue
             
         # Convert to float if they're strings with % or $ signs
         if isinstance(low, str):
-            low_val = float(re.sub(r'[^\d.-]', '', low))
+            try:
+                low_val = float(re.sub(r'[^\d.-]', '', low))
+            except ValueError:
+                continue  # Skip if we can't convert to float
         else:
             low_val = low
             
         if isinstance(high, str):
-            high_val = float(re.sub(r'[^\d.-]', '', high))
+            try:
+                high_val = float(re.sub(r'[^\d.-]', '', high))
+            except ValueError:
+                continue  # Skip if we can't convert to float
         else:
             high_val = high
         
         # Get original value text for context
         original_value = str(row.get('Value', ''))
         
-        # If low is negative and high is positive, but the original value contains
-        # language suggesting both should be negative, make high negative too
+        # Extract explicit negative indicators from the original value
+        has_parenthetical_notation = '(' in original_value and ')' in original_value and re.search(r'\(\s*\$?\s*\d', original_value)
+        has_minus_sign = '-' in original_value and re.search(r'-\s*\$?\s*\d', original_value)
+        
+        # Check if there's explicit negative language (not just generic "decrease" which could be positive)
+        has_negative_language = re.search(r'\b(?:loss|deficit|negative)\b', original_value, re.I)
+        
+        # 1. If low is negative and high is positive, but clear indicators that both should be negative
         if low_val < 0 and high_val > 0:
-            if re.search(r'(?:decline|decrease|down|negative|loss)', original_value, re.I) or '(' in original_value:
+            should_both_be_negative = (
+                has_parenthetical_notation or 
+                has_minus_sign or 
+                has_negative_language
+            )
+            
+            if should_both_be_negative:
                 # Both values should be negative - fix the high value
                 if isinstance(high, str):
                     if '%' in high:
-                        df.at[idx, 'High'] = f"{-high_val:.1f}%"
+                        df.at[idx, 'High'] = f"-{abs(high_val):.1f}%"
                     elif '$' in high:
                         if abs(high_val) >= 100:
                             df.at[idx, 'High'] = f"-${abs(high_val):.0f}"
@@ -339,15 +405,79 @@ def check_range_consistency(df):
                             df.at[idx, 'High'] = f"-${abs(high_val):.1f}"
                         else:
                             df.at[idx, 'High'] = f"-${abs(high_val):.2f}"
+                    else:
+                        df.at[idx, 'High'] = f"-{abs(high_val)}"
                 else:
                     df.at[idx, 'High'] = -abs(high_val)
                 
                 # Also fix the average
-                if 'Average' in df.columns:
+                if 'Average' in df.columns and not pd.isnull(row.get('Average')):
                     avg = (low_val + (-high_val)) / 2
-                    if isinstance(row.get('Average'), str) and '%' in row.get('Average', ''):
+                    if isinstance(row.get('Average'), str):
+                        if '%' in row.get('Average', ''):
+                            df.at[idx, 'Average'] = f"{avg:.1f}%"
+                        elif '$' in row.get('Average', ''):
+                            if abs(avg) >= 100:
+                                df.at[idx, 'Average'] = f"${avg:.0f}"
+                            elif abs(avg) >= 10:
+                                df.at[idx, 'Average'] = f"${avg:.1f}"
+                            else:
+                                df.at[idx, 'Average'] = f"${avg:.2f}"
+                        else:
+                            df.at[idx, 'Average'] = avg
+                    else:
+                        df.at[idx, 'Average'] = avg
+        
+        # 2. If low is positive and high is negative, this is likely an error too
+        elif low_val > 0 and high_val < 0:
+            # This is usually a parsing error - fix based on value format
+            # Typically ranges go from lower to higher value, so make high positive or low negative
+            
+            # Check if there are clear negative indicators
+            if has_parenthetical_notation or has_minus_sign or has_negative_language:
+                # Make low negative to match high
+                if isinstance(low, str):
+                    if '%' in low:
+                        df.at[idx, 'Low'] = f"-{abs(low_val):.1f}%"
+                    elif '$' in low:
+                        if abs(low_val) >= 100:
+                            df.at[idx, 'Low'] = f"-${abs(low_val):.0f}"
+                        elif abs(low_val) >= 10:
+                            df.at[idx, 'Low'] = f"-${abs(low_val):.1f}"
+                        else:
+                            df.at[idx, 'Low'] = f"-${abs(low_val):.2f}"
+                    else:
+                        df.at[idx, 'Low'] = f"-{abs(low_val)}"
+                else:
+                    df.at[idx, 'Low'] = -abs(low_val)
+            else:
+                # Make high positive to match low
+                if isinstance(high, str):
+                    if '%' in high:
+                        df.at[idx, 'High'] = f"{abs(high_val):.1f}%"
+                    elif '$' in high:
+                        if abs(high_val) >= 100:
+                            df.at[idx, 'High'] = f"${abs(high_val):.0f}"
+                        elif abs(high_val) >= 10:
+                            df.at[idx, 'High'] = f"${abs(high_val):.1f}"
+                        else:
+                            df.at[idx, 'High'] = f"${abs(high_val):.2f}"
+                    else:
+                        df.at[idx, 'High'] = f"{abs(high_val)}"
+                else:
+                    df.at[idx, 'High'] = abs(high_val)
+            
+            # Recalculate average
+            if 'Average' in df.columns and not pd.isnull(row.get('Average')):
+                if has_parenthetical_notation or has_minus_sign or has_negative_language:
+                    avg = ((-abs(low_val)) + high_val) / 2
+                else:
+                    avg = (low_val + abs(high_val)) / 2
+                
+                if isinstance(row.get('Average'), str):
+                    if '%' in row.get('Average', ''):
                         df.at[idx, 'Average'] = f"{avg:.1f}%"
-                    elif isinstance(row.get('Average'), str) and '$' in row.get('Average', ''):
+                    elif '$' in row.get('Average', ''):
                         if abs(avg) >= 100:
                             df.at[idx, 'Average'] = f"${avg:.0f}"
                         elif abs(avg) >= 10:
@@ -356,16 +486,16 @@ def check_range_consistency(df):
                             df.at[idx, 'Average'] = f"${avg:.2f}"
                     else:
                         df.at[idx, 'Average'] = avg
-        
-        # If both low and high are positive but should be negative based on context
+                else:
+                    df.at[idx, 'Average'] = avg
+                    
+        # 3. If both low and high are positive but should be negative based on strong evidence
         elif low_val > 0 and high_val > 0:
             should_be_negative = (
-                # Check for explicit negative indicators
-                '(' in original_value or  # Parenthetical notation
-                '-' in original_value or  # Explicit minus sign
-                re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', original_value, re.I) or  # Negative words
-                # Check the metric name
-                any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease'])
+                # Only apply this correction if we have STRONG indicators
+                has_parenthetical_notation or 
+                has_minus_sign or
+                has_negative_language
             )
             
             if should_be_negative:
@@ -373,7 +503,7 @@ def check_range_consistency(df):
                 for col, val in [('Low', low_val), ('High', high_val)]:
                     if isinstance(df.loc[idx, col], str):
                         if '%' in df.loc[idx, col]:
-                            df.at[idx, col] = f"{-abs(val):.1f}%"
+                            df.at[idx, col] = f"-{abs(val):.1f}%"
                         elif '$' in df.loc[idx, col]:
                             if abs(val) >= 100:
                                 df.at[idx, col] = f"-${abs(val):.0f}"
@@ -381,34 +511,46 @@ def check_range_consistency(df):
                                 df.at[idx, col] = f"-${abs(val):.1f}"
                             else:
                                 df.at[idx, col] = f"-${abs(val):.2f}"
+                        else:
+                            df.at[idx, col] = f"-{abs(val)}"
                     else:
                         df.at[idx, col] = -abs(val)
                 
                 # Also fix the average
-                if 'Average' in df.columns:
+                if 'Average' in df.columns and not pd.isnull(row.get('Average')):
                     avg = ((-abs(low_val)) + (-abs(high_val))) / 2
-                    if isinstance(row.get('Average'), str) and '%' in row.get('Average', ''):
-                        df.at[idx, 'Average'] = f"{avg:.1f}%"
-                    elif isinstance(row.get('Average'), str) and '$' in row.get('Average', ''):
-                        if abs(avg) >= 100:
-                            df.at[idx, 'Average'] = f"${avg:.0f}"
-                        elif abs(avg) >= 10:
-                            df.at[idx, 'Average'] = f"${avg:.1f}"
+                    if isinstance(row.get('Average'), str):
+                        if '%' in row.get('Average', ''):
+                            df.at[idx, 'Average'] = f"{avg:.1f}%"
+                        elif '$' in row.get('Average', ''):
+                            if abs(avg) >= 100:
+                                df.at[idx, 'Average'] = f"${avg:.0f}"
+                            elif abs(avg) >= 10:
+                                df.at[idx, 'Average'] = f"${avg:.1f}"
+                            else:
+                                df.at[idx, 'Average'] = f"${avg:.2f}"
                         else:
-                            df.at[idx, 'Average'] = f"${avg:.2f}"
+                            df.at[idx, 'Average'] = avg
                     else:
                         df.at[idx, 'Average'] = avg
         
-        # If both low and high are negative but should be positive based on context
+        # 4. If both low and high are negative but we have strong evidence they should be positive
         elif low_val < 0 and high_val < 0:
-            should_be_positive = (
-                # Check for lack of negative indicators
-                not '(' in original_value and 
-                not '-' in original_value and
-                not re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', original_value, re.I) and
-                # Check for explicit dollar sign without negative indicators
-                ('$' in original_value and not '($' in original_value and not '-$' in original_value)
+            # We need stronger evidence to convert negative to positive
+            # Dollar values without negative indicators are a strong signal
+            dollar_without_negative = (
+                '$' in original_value and 
+                not '($' in original_value and 
+                not '-$' in original_value and
+                not has_parenthetical_notation and
+                not has_minus_sign and
+                not has_negative_language
             )
+            
+            # Explicit growth/positive language
+            has_positive_language = re.search(r'\b(?:growth|increase|up|positive|profit|gain)\b', original_value, re.I)
+            
+            should_be_positive = dollar_without_negative or has_positive_language
             
             if should_be_positive:
                 # Both values should be positive - fix both values
@@ -423,29 +565,34 @@ def check_range_consistency(df):
                                 df.at[idx, col] = f"${abs(val):.1f}"
                             else:
                                 df.at[idx, col] = f"${abs(val):.2f}"
+                        else:
+                            df.at[idx, col] = f"{abs(val)}"
                     else:
                         df.at[idx, col] = abs(val)
                 
                 # Also fix the average
-                if 'Average' in df.columns:
+                if 'Average' in df.columns and not pd.isnull(row.get('Average')):
                     avg = (abs(low_val) + abs(high_val)) / 2
-                    if isinstance(row.get('Average'), str) and '%' in row.get('Average', ''):
-                        df.at[idx, 'Average'] = f"{avg:.1f}%"
-                    elif isinstance(row.get('Average'), str) and '$' in row.get('Average', ''):
-                        if abs(avg) >= 100:
-                            df.at[idx, 'Average'] = f"${avg:.0f}"
-                        elif abs(avg) >= 10:
-                            df.at[idx, 'Average'] = f"${avg:.1f}"
+                    if isinstance(row.get('Average'), str):
+                        if '%' in row.get('Average', ''):
+                            df.at[idx, 'Average'] = f"{avg:.1f}%"
+                        elif '$' in row.get('Average', ''):
+                            if abs(avg) >= 100:
+                                df.at[idx, 'Average'] = f"${avg:.0f}"
+                            elif abs(avg) >= 10:
+                                df.at[idx, 'Average'] = f"${avg:.1f}"
+                            else:
+                                df.at[idx, 'Average'] = f"${avg:.2f}"
                         else:
-                            df.at[idx, 'Average'] = f"${avg:.2f}"
+                            df.at[idx, 'Average'] = avg
                     else:
                         df.at[idx, 'Average'] = avg
         
-        # Check for duplicate values in ranges
+        # 5. Check for duplicate values in ranges
         # If Low and High are identical but the Value column indicates a range
-        if low_val == high_val and ('-' in original_value or ' to ' in original_value.lower()):
+        if abs(low_val - high_val) < 0.0001 and ('-' in original_value or ' to ' in original_value.lower()):
             # Try to extract the correct range from the Value
-            range_match = re.search(r'(\d+)(?:\s*-\s*|\s+to\s+)(\d+)', original_value)
+            range_match = re.search(r'(\d+(?:\.\d+)?)(?:\s*-\s*|\s+to\s+)(\d+(?:\.\d+)?)', original_value)
             if range_match:
                 lo_str, hi_str = range_match.group(1), range_match.group(2)
                 if lo_str != hi_str:  # If the matched values are different
@@ -455,9 +602,9 @@ def check_range_consistency(df):
                         
                         # Check if they should be negative
                         should_be_negative = (
-                            '(' in original_value or  # Parenthetical notation
-                            '-' in original_value or  # Explicit minus sign
-                            re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', original_value, re.I)  # Negative words
+                            has_parenthetical_notation or
+                            has_minus_sign or
+                            has_negative_language
                         )
                         
                         if should_be_negative:
@@ -483,7 +630,7 @@ def check_range_consistency(df):
                             df.at[idx, 'High'] = new_hi
                         
                         # Update the average
-                        if 'Average' in df.columns:
+                        if 'Average' in df.columns and not pd.isnull(row.get('Average')):
                             new_avg = (new_lo + new_hi) / 2
                             if isinstance(row.get('Average'), str):
                                 if '%' in row.get('Average', ''):
@@ -495,13 +642,14 @@ def check_range_consistency(df):
                                         df.at[idx, 'Average'] = f"${new_avg:.1f}"
                                     else:
                                         df.at[idx, 'Average'] = f"${new_avg:.2f}"
+                                else:
+                                    df.at[idx, 'Average'] = new_avg
                             else:
                                 df.at[idx, 'Average'] = new_avg
-                    except:
+                    except ValueError:
                         pass
     
     return df
-
 
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
 st.title("📄 SEC 8-K Guidance Extractor")
