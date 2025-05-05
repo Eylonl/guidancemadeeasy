@@ -23,16 +23,27 @@ def extract_number(token: str):
     # Store whether the number is negative for later use
     neg = is_negative or parentheses_negative
     
-    # Remove parentheses, dollar signs, and commas
+    # Remove parentheses, dollar signs, and commas for numerical processing
     tok = token.replace('(', '').replace(')', '').replace('$','') \
                .replace(',', '').replace('-', '').strip().lower()
     
+    # Convert billions to millions (multiply by 1000)
     factor = 1.0
-    if tok.endswith('billion'): tok, factor = tok[:-7].strip(), 1000
-    elif tok.endswith('million'): tok, factor = tok[:-7].strip(), 1
-    elif tok.endswith('b'): tok, factor = tok[:-1].strip(), 1000
-    elif tok.endswith('m'): tok, factor = tok[:-1].strip(), 1
-    elif tok.endswith('k'): tok, factor = tok[:-1].strip(), 0.001
+    if 'billion' in tok or tok.endswith('b'):
+        if 'billion' in tok:
+            tok = tok.replace('billion', '').strip()
+        elif tok.endswith('b'):
+            tok = tok[:-1].strip()
+        factor = 1000.0  # Convert to millions
+    elif 'million' in tok or tok.endswith('m'):
+        if 'million' in tok:
+            tok = tok.replace('million', '').strip()
+        elif tok.endswith('m'):
+            tok = tok[:-1].strip()
+        factor = 1.0
+    elif tok.endswith('k'):
+        tok = tok[:-1].strip()
+        factor = 0.001
     
     try:
         val = float(tok) * factor
@@ -67,6 +78,7 @@ def parse_value_range(text: str):
     """
     Enhanced function to parse value ranges from guidance text.
     Handles formats like "$0.08 to $0.09", "-14% to -13%", etc. with proper negative value processing.
+    Also correctly handles billion to million conversion.
     """
     if not isinstance(text, str):
         return (None, None, None)
@@ -594,7 +606,8 @@ def find_guidance_paragraphs(text):
 
 def extract_guidance(text, ticker, client):
     """
-    Enhanced function to extract guidance from SEC filings with better handling of negative ranges.
+    Enhanced function to extract guidance from SEC filings with better handling of negative ranges
+    and billion to million conversion.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -633,6 +646,17 @@ CRITICAL HANDLING OF NEGATIVE RANGES:
    - CORRECT: "-$0.20 to -$0.14" (not "-$0.20 to $0.14" or "-$0.20-$0.14")
    - CORRECT: "-14% to -13%" (not "-14% to 13%" or "-14%-13%")
 
+CRITICAL FORMATTING FOR BILLION VALUES:
+- When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), convert it to millions by multiplying by 1000:
+  - Example: "$1.10 billion" should be output as "$1,100 million"
+  - Example: "$1.11B" should be output as "$1,110 million"
+  - Example: A range of "$1.10-$1.11 billion" should be output as "$1,100-$1,110 million"
+  - Example: "$1.117 billion to $1.121 billion" should be output as "$1,117 million to $1,121 million"
+- IMPORTANT: Do NOT add extra zeros beyond multiplying by 1000. Just convert the exact number from billions to millions.
+- WRONG: "$1.117 billion" should NOT become "$1,117,000 million"
+- CORRECT: "$1.117 billion" should become "$1,117 million"
+- For ranges, convert each number individually: "$1.117-$1.121 billion" becomes "$1,117-$1,121 million"
+
 IMPORTANT FORMATTING INSTRUCTIONS:
 - For dollar ranges, use the format "$X to $Y" (with dollar sign before each number)
   - Example: "$0.08 to $0.09" (not "$0.08-0.09")
@@ -640,7 +664,7 @@ IMPORTANT FORMATTING INSTRUCTIONS:
   - Example: "5% to 7%" (not "5-7%")
 - For other numeric ranges, use "X to Y" format
   - Example: "100 to 110" (not "100-110")
-- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.)
+- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.) EXCEPT for billion values which must be converted as instructed above
 
 Respond in table format without commentary.\n\n{text}"""
     
