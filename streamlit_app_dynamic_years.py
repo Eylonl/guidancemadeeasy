@@ -169,6 +169,14 @@ if st.button("🔍 Extract Guidance"):
             if year_input.strip():
                 if re.match(r'\dQ\d{2,4}', year_input.upper()):
                     target = year_input.upper()
+                    q_map = {'1': 'FIRST', '2': 'SECOND', '3': 'THIRD', '4': 'FOURTH'}
+                    q_num, fy = target[0], target[-2:]
+                    quarter_names = [
+                        f"{q_map[q_num]} QUARTER FY{fy}",
+                        f"Q{q_num} FY{fy}",
+                        f"FISCAL {q_map[q_num]} QUARTER {fy}",
+                        f"{q_map[q_num]} FISCAL QUARTER {fy}"
+                    ]
                     all_recent = get_accessions(cik, 10)
                     for acc, date_str in all_recent:
                         links = get_ex99_1_links(cik, [(acc, date_str)])
