@@ -222,68 +222,134 @@ if st.button("🔍 Extract Guidance"):
                         
                         # Create DataFrame if we have header and data
                         if len(rows) >= 2:
-                            # Create dataframe from rows
-                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                            
-                            # Normalize column names
-                            column_mapping = {
-                                'metric': 'Metric',
-                                'value or range': 'Value',
-                                'applicable period': 'Period',
-                                'period': 'Period',
-                                'value': 'Value'
-                            }
-                            
-                            # Rename columns
-                            df = df.rename(columns={k: v for k, v in column_mapping.items() 
-                                                  if k in df.columns})
-                            
-                            # Make sure required columns exist
-                            if 'Metric' not in df.columns and len(df.columns) > 0:
-                                df['Metric'] = df.iloc[:, 0]
-                            
-                            if 'Value' not in df.columns and len(df.columns) > 1:
-                                df['Value'] = df.iloc[:, 1]
+                            try:
+                                # Check for column count mismatch
+                                num_header_cols = len(rows[0])
+                                for i, row in enumerate(rows[1:], 1):
+                                    if len(row) != num_header_cols:
+                                        # Fix row length to match header
+                                        if len(row) < num_header_cols:
+                                            # If row is shorter, pad with empty strings
+                                            rows[i] = row + [''] * (num_header_cols - len(row))
+                                        else:
+                                            # If row is longer, truncate
+                                            rows[i] = row[:num_header_cols]
+                                            
+                                # Now create the DataFrame with fixed rows
+                                df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                                 
-                            if 'Period' not in df.columns and len(df.columns) > 2:
-                                df['Period'] = df.iloc[:, 2]
-                            
-                            # Parse values to get Low, High, Average
-                            parsed_values = df["Value"].apply(parse_value_range)
-                            
-                            # Check if the original value is a percentage
-                            is_percentage = df["Value"].str.contains("%", regex=False)
-                            
-                            # Add new columns
-                            df["Low"] = [v[0] if isinstance(v[0], (int, float)) else None for v in parsed_values]
-                            df["High"] = [v[1] if isinstance(v[1], (int, float)) else None for v in parsed_values]
-                            
-                            # For Average: use calculated average if available, otherwise use the text value
-                            df["Average"] = [
-                                v[2] if isinstance(v[2], (int, float)) else 
-                                (v[2] if isinstance(v[2], str) else None) 
-                                for v in parsed_values
-                            ]
-                            
-                            # Format percentage values with % symbol
-                            for col in ["Low", "High", "Average"]:
-                                # Only format cells where the original value was a percentage
-                                mask = (is_percentage & df[col].notna())
-                                df.loc[mask, col] = df.loc[mask, col].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
-                            
-                            # Add filing information
-                            df["FilingDate"] = date_str
-                            df["8K_Link"] = url
-                            
-                            # Keep only the columns we need
-                            cols_to_keep = [
-                                "Metric", "Value", "Low", "High", "Average", 
-                                "Period", "FilingDate", "8K_Link"
-                            ]
-                            df = df[[col for col in cols_to_keep if col in df.columns]]
-                            
-                            results.append(df)
-                            st.success("✅ Guidance extracted from this 8-K.")
+                                # Normalize column names
+                                column_mapping = {
+                                    'metric': 'Metric',
+                                    'value or range': 'Value',
+                                    'applicable period': 'Period',
+                                    'period': 'Period',
+                                    'value': 'Value'
+                                }
+                                
+                                # Rename columns
+                                df = df.rename(columns={k: v for k, v in column_mapping.items() 
+                                                      if k in df.columns})
+                                
+                                # Make sure required columns exist
+                                if 'Metric' not in df.columns and len(df.columns) > 0:
+                                    df['Metric'] = df.iloc[:, 0]
+                                
+                                if 'Value' not in df.columns and len(df.columns) > 1:
+                                    df['Value'] = df.iloc[:, 1]
+                                    
+                                if 'Period' not in df.columns:
+                                    # If Period column doesn't exist, create it
+                                    if len(df.columns) > 2:
+                                        df['Period'] = df.iloc[:, 2]
+                                    else:
+                                        # If we don't have enough columns, add an empty Period column
+                                        df['Period'] = ''
+                                
+                                # Parse values to get Low, High, Average
+                                parsed_values = df["Value"].apply(parse_value_range)
+                                
+                                # Check if the original value is a percentage
+                                is_percentage = df["Value"].str.contains("%", regex=False)
+                                
+                                # Add new columns
+                                df["Low"] = [v[0] if isinstance(v[0], (int, float)) else None for v in parsed_values]
+                                df["High"] = [v[1] if isinstance(v[1], (int, float)) else None for v in parsed_values]
+                                
+                                # For Average: use calculated average if available, otherwise use the text value
+                                df["Average"] = [
+                                    v[2] if isinstance(v[2], (int, float)) else 
+                                    (v[2] if isinstance(v[2], str) else None) 
+                                    for v in parsed_values
+                                ]
+                                
+                                # Format percentage values with % symbol
+                                for col in ["Low", "High", "Average"]:
+                                    # Only format cells where the original value was a percentage
+                                    mask = (is_percentage & df[col].notna())
+                                    df.loc[mask, col] = df.loc[mask, col].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
+                                
+                                # Add filing information
+                                df["FilingDate"] = date_str
+                                df["8K_Link"] = url
+                                
+                                # Keep only the columns we need
+                                cols_to_keep = [
+                                    "Metric", "Value", "Low", "High", "Average", 
+                                    "Period", "FilingDate", "8K_Link"
+                                ]
+                                df = df[[col for col in cols_to_keep if col in df.columns]]
+                                
+                                results.append(df)
+                                st.success("✅ Guidance extracted from this 8-K.")
+                            except Exception as e:
+                                st.warning(f"Error creating DataFrame: {str(e)}")
+                                st.expander("Table Structure Debug").write(rows)
+                                # Try a fallback approach for irregularly structured tables
+                                try:
+                                    # Create a more simplified DataFrame with just the data we have
+                                    # Extract column names from first row
+                                    if rows and len(rows) >= 2:
+                                        headers = rows[0]
+                                        # Create a dictionary to build the DataFrame
+                                        data_dict = {header: [] for header in headers}
+                                        
+                                        # Fill in the data, handling missing values
+                                        for row in rows[1:]:
+                                            for i, header in enumerate(headers):
+                                                if i < len(row):
+                                                    data_dict[header].append(row[i])
+                                                else:
+                                                    data_dict[header].append('')
+                                        
+                                        # Create DataFrame from dictionary
+                                        df = pd.DataFrame(data_dict)
+                                        
+                                        # Add necessary columns and continue processing
+                                        if 'Metric' not in df.columns and len(df.columns) > 0:
+                                            df['Metric'] = df.iloc[:, 0]
+                                            
+                                        if 'Value' not in df.columns:
+                                            if len(df.columns) > 1:
+                                                df['Value'] = df.iloc[:, 1]
+                                            else:
+                                                df['Value'] = ''
+                                                
+                                        if 'Period' not in df.columns:
+                                            df['Period'] = ''
+                                            
+                                        # Simplified version of processing from above
+                                        df["FilingDate"] = date_str
+                                        df["8K_Link"] = url
+                                        
+                                        # Keep only essential columns
+                                        essential_cols = ["Metric", "Value", "Period", "FilingDate", "8K_Link"]
+                                        df = df[[col for col in essential_cols if col in df.columns]]
+                                        
+                                        results.append(df)
+                                        st.success("✅ Guidance extracted with simplified processing.")
+                                except Exception as e2:
+                                    st.error(f"Fallback approach also failed: {str(e2)}")
                         else:
                             st.warning("⚠️ Skipped, no valid table structure found in the response.")
                     else:
@@ -294,22 +360,30 @@ if st.button("🔍 Extract Guidance"):
                     st.expander("Debug Information").code(traceback.format_exc())
 
             if results:
-                combined = pd.concat(results, ignore_index=True)
-                
-                # Display the table in the app
-                st.subheader("Extracted Guidance")
-                st.dataframe(combined)
-                
-                # CSV download only
-                import io
-                csv_buffer = io.BytesIO()
-                combined.to_csv(csv_buffer, index=False)
-                csv_buffer.seek(0)
-                st.download_button(
-                    "📥 Download CSV",
-                    data=csv_buffer.getvalue(),
-                    file_name=f"{ticker}_guidance_output.csv",
-                    mime="text/csv"
-                )
+                try:
+                    combined = pd.concat(results, ignore_index=True)
+                    
+                    # Display the table in the app
+                    st.subheader("Extracted Guidance")
+                    st.dataframe(combined)
+                    
+                    # CSV download only
+                    import io
+                    csv_buffer = io.BytesIO()
+                    combined.to_csv(csv_buffer, index=False)
+                    csv_buffer.seek(0)
+                    st.download_button(
+                        "📥 Download CSV",
+                        data=csv_buffer.getvalue(),
+                        file_name=f"{ticker}_guidance_output.csv",
+                        mime="text/csv"
+                    )
+                except Exception as e:
+                    st.error(f"Error combining results: {str(e)}")
+                    # Try to display individual DataFrames
+                    st.subheader("Individual Results (Could not combine)")
+                    for i, df in enumerate(results):
+                        st.write(f"Result {i+1}:")
+                        st.dataframe(df)
             else:
                 st.warning("No guidance data extracted.")
