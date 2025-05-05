@@ -231,9 +231,8 @@ if st.button("🔍 Extract Guidance"):
                 try:
                     html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
                     text = BeautifulSoup(html, "html.parser").get_text()
-                    forw_idx = text.lower().find("forward looking statements")
-                    if forw_idx != -1:
-                        text = text[:forw_idx]
+                    # forw_idx trimming removed – guidance kept
+#
                     
                     # Get guidance table from OpenAI
                     table = extract_guidance(text, ticker, client)
@@ -421,3 +420,65 @@ if st.button("🔍 Extract Guidance"):
                         st.dataframe(df)
             else:
                 st.warning("No guidance data extracted.")
+
+
+# ───────────────────────── UPDATED HELPERS (Auto‑generated) ────────────────────────────
+import re
+from typing import Optional, Dict
+
+# Token that matches “$1,085 million”, “2.3B”, “-900K”, etc.
+number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
+
+def extract_number(token: str) -> Optional[float]:
+    """
+    Parse a token and return the numeric value **in millions**.
+
+        '$1,085 million'  -> 1085
+        '2.3B'            -> 2300
+        '(900K)'          -> -0.9
+    """
+    if not token:
+        return None
+
+    # Handle negatives written like "(1.5M)"
+    neg = token.strip().startswith('(') and token.strip().endswith(')')
+    token = token.replace('(', '').replace(')', '')
+
+    token = token.replace('$', '').replace(',', '').strip().lower()
+
+    factor = 1.0            # default: token already in millions
+    if token.endswith('billion'):
+        token = token[:-7].strip();  factor = 1_000          # 1 B = 1000 M
+    elif token.endswith('million'):
+        token = token[:-7].strip();  factor = 1
+    elif token.endswith('k'):
+        token = token[:-1].strip();  factor = 0.001          # 1 K = 0.001 M
+    elif token.endswith('m'):
+        token = token[:-1].strip();  factor = 1
+    elif token.endswith('b'):
+        token = token[:-1].strip();  factor = 1_000
+
+    try:
+        value = float(token) * factor
+        return -value if neg else value
+    except ValueError:
+        return None
+
+
+def parse_value_range(text: str) -> Dict[str, Optional[float]]:
+    """
+    Find a single number or a range “A – B”/“A to B” in `text`.
+    Returns a dict with numeric values **in millions**.
+    """
+    range_pat = rf'({number_token})(?:\s*[-–—~]\s*|\s+to\s+)({number_token})'
+    m = re.search(range_pat, text, flags=re.I)
+    if m:
+        low  = extract_number(m.group(1))
+        high = extract_number(m.group(2))
+        avg  = (low + high) / 2 if low is not None and high is not None else None
+        return {"low": low, "high": high, "avg": avg}
+
+    m = re.search(number_token, text, flags=re.I)
+    value = extract_number(m.group(0)) if m else None
+    return {"low": value, "high": value, "avg": value}
+# ──────────────────────────────────────────────────────────────────────
