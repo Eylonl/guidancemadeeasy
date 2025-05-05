@@ -559,52 +559,19 @@ if st.button("🔍 Extract Guidance"):
                     text = soup.get_text(" ", strip=True)
                     
                     # Find paragraphs containing guidance patterns
-                    guidance_patterns = [
-                        r'(?i)outlook',
-                        r'(?i)guidance',
-                        r'(?i)financial outlook',
-                        r'(?i)business outlook',
-                        r'(?i)forward[\s-]*looking',
-                        r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
-                        r'(?i)(?:we|company) expect(?:s)?',
-                        r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
-                        r'(?i)to be (?:in the range of|approximately)',
-                        r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
-                        r'(?i)growth of (?:approximately|about)',
-                        r'(?i)for (?:fiscal|the fiscal)',
-                        r'(?i)next quarter',
-                        r'(?i)full year',
-                        r'(?i)current quarter',
-                        r'(?i)future quarter',
-                        r'(?i)Q[1-4]'
-                    ]
-                    
-                    # Split text into paragraphs
-                    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-                    guidance_paragraphs = []
-                    
-                    for para in paragraphs:
-                        if any(re.search(pattern, para) for pattern in guidance_patterns):
-                            # Check if it's likely a forward-looking statement (not a disclaimer)
-                            if not (re.search(r'(?i)safe harbor', para) or 
-                                   (re.search(r'(?i)forward-looking statements', para) and 
-                                    re.search(r'(?i)risks', para))):
-                                guidance_paragraphs.append(para)
+                    guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
                     
                     # Check if we found any guidance paragraphs
-                    if guidance_paragraphs:
-                        st.success(f"✅ Found potential guidance information in {len(guidance_paragraphs)} paragraphs.")
-                        
-                        # Create a highlighted version of the text with guidance sections
-                        guidance_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
-                        guidance_text += "POTENTIAL GUIDANCE SECTIONS:\n\n" + "\n\n".join(guidance_paragraphs)
+                    if found_guidance:
+                        st.success(f"✅ Found potential guidance information.")
                         
                         # Extract guidance from the highlighted text
-                        table = extract_guidance(guidance_text, ticker, client)
+                        table = extract_guidance(guidance_paragraphs, ticker, client)
                     else:
                         st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
                         # Use a sample of the document to reduce token usage
                         sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
                         sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
                         table = extract_guidance(sample_text, ticker, client)
                     
@@ -644,15 +611,15 @@ if st.button("🔍 Extract Guidance"):
                             
                             # Show a sample of the text to help debug
                             st.write("Sample of text sent to OpenAI:")
-                            sample_length = min(500, len(guidance_text))
-                            st.text(guidance_text[:sample_length] + "..." if len(guidance_text) > sample_length else guidance_text)
+                            sample_length = min(500, len(guidance_paragraphs))
+                            st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
                     else:
                         st.warning(f"⚠️ No guidance table found in {url}")
                         
                         # Show a sample of the text to help debug
                         st.write("Sample of text sent to OpenAI:")
-                        sample_length = min(500, len(guidance_text))
-                        st.text(guidance_text[:sample_length] + "..." if len(guidance_text) > sample_length else guidance_text)
+                        sample_length = min(500, len(guidance_paragraphs))
+                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
                 except Exception as e:
                     st.warning(f"Could not process: {url}. Error: {str(e)}")
 
