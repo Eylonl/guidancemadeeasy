@@ -175,7 +175,6 @@ if st.button("🔍 Extract Guidance"):
                             accessions.append((acc, date_str))
                     if not accessions:
                         st.warning(f"No filings found for period {period}")
-                else:
                     try:
                         years_back = int(year_input)
                         accessions = get_accessions(cik, years_back)
@@ -187,7 +186,6 @@ if st.button("🔍 Extract Guidance"):
                 accessions.append((acc, date_str))
         if not accessions:
             st.warning(f"No filings found for period {period}")
-    else:
         try:
             years_back = int(year_input)
             accessions = get_accessions(cik, years_back)
