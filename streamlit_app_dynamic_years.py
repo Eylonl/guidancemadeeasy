@@ -276,13 +276,12 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
             quarter_num = int(quarter)
             year_num = int(year)
             
-            # Get fiscal dates - pass the cik to avoid duplicate lookups
-            fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num, cik)
+            # Get fiscal dates using our simplified approach
+            fiscal_info = get_fiscal_quarter_info(ticker, quarter_num, year_num)
             
-            # Display fiscal quarter information
-            st.write(f"Looking for {ticker} {fiscal_info['quarter_period']} filings")
-            st.write(f"Fiscal quarter period: {fiscal_info['period_description']}")
-            st.write(f"Expected earnings reporting window: {fiscal_info['expected_report']}")
+            if not fiscal_info:
+                st.error(f"Could not determine fiscal quarter information for {specific_quarter}")
+                return []
             
             # We want to find filings around the expected earnings report date
             start_date = fiscal_info['report_start'] - timedelta(days=15)  # Include potential early reports
