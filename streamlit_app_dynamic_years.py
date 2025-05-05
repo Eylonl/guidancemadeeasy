@@ -225,11 +225,12 @@ if st.button("🔍 Extract Guidance"):
             
             # Handle different filtering options
             if quarter_input.strip():
-                # Quarter input takes precedence if both are filled
+                # Quarter input takes precedence over other options, including blank years_back
                 accessions = get_accessions(cik, specific_quarter=quarter_input.strip())
                 if not accessions:
                     st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
             elif year_input.strip():
+                # Only use years_back if quarter is not specified
                 try:
                     years_back = int(year_input.strip())
                     accessions = get_accessions(cik, years_back=years_back)
