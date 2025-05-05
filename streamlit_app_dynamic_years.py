@@ -164,8 +164,8 @@ if st.button("🔍 Extract Guidance"):
 
     
 
-            if not api_key:
-        st.error("Please enter your OpenAI API key.")
+        if not api_key:
+            st.error("Please enter your OpenAI API key.")
     else:
         cik = lookup_cik(ticker)
         if not cik:
