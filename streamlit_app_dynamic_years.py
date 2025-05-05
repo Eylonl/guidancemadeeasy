@@ -6,7 +6,6 @@ from openai import OpenAI
 import pandas as pd
 import os
 import re
-import io
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
@@ -14,15 +13,24 @@ number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
 def extract_number(token: str):
     if not token or not isinstance(token, str):
         return None
-    neg = token.strip().startswith('(') and token.strip().endswith(')' )
+    
+    # Check if the token is a negative value with a - sign
+    is_negative = '-' in token
+    
+    # Also check for common financial notation of parentheses to indicate negative
+    neg = (token.strip().startswith('(') and token.strip().endswith(')')) or is_negative
+    
+    # Remove parentheses, dollar signs, and commas
     tok = token.replace('(', '').replace(')', '').replace('$','') \
-               .replace(',', '').strip().lower()
+               .replace(',', '').replace('-', '').strip().lower()
+    
     factor = 1.0
     if tok.endswith('billion'): tok, factor = tok[:-7].strip(), 1000
     elif tok.endswith('million'): tok, factor = tok[:-7].strip(), 1
     elif tok.endswith('b'): tok, factor = tok[:-1].strip(), 1000
     elif tok.endswith('m'): tok, factor = tok[:-1].strip(), 1
     elif tok.endswith('k'): tok, factor = tok[:-1].strip(), 0.001
+    
     try:
         val = float(tok) * factor
         return -val if neg else val
@@ -40,7 +48,8 @@ def format_percent(val):
 def parse_value_range(text: str):
     """
     Enhanced function to parse value ranges from guidance text.
-    Handles formats like "$0.08-$0.09" with dollar signs on both numbers.
+    Handles formats like "$0.08-$0.09" with dollar signs on both numbers,
+    and properly processes negative values in parentheses.
     """
     if not isinstance(text, str):
         return (None, None, None)
@@ -49,16 +58,27 @@ def parse_value_range(text: str):
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
         return (0.0, 0.0, 0.0)
     
+    # Handle negative values in parentheses (common financial notation)
+    text = re.sub(r'\$\(([0-9\.]+)\)', r'-$\1', text)  # Replace $(0.01) with -$0.01
+    text = re.sub(r'\(([0-9\.]+)%\)', r'-\1%', text)  # Replace (5%) with -5%
+    text = re.sub(r'~\(([0-9\.]+)%\)', r'-\1%', text)  # Replace ~(5%) with -5%
+    
+    # Handle "decrease of X%" pattern
+    decrease_match = re.search(r'decrease\s+of\s+([0-9\.]+)%', text, re.I)
+    if decrease_match:
+        val = float(decrease_match.group(1))
+        return (-val, -val, -val)
+    
     # First try to match ranges with dollar signs on both sides like "$0.08-$0.09"
-    dollar_range = re.search(r'\$\s*(\d+(?:\.\d+)?)\s*[-–—~]\s*\$\s*(\d+(?:\.\d+)?)', text, re.I)
+    dollar_range = re.search(r'(-?\$\s*\d+(?:\.\d+)?)\s*[-–—~]\s*(-?\$\s*\d+(?:\.\d+)?)', text, re.I)
     if dollar_range:
-        lo = float(dollar_range.group(1))
-        hi = float(dollar_range.group(2))
+        lo = extract_number(dollar_range.group(1))
+        hi = extract_number(dollar_range.group(2))
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
     
     # Try to match percentage ranges with percent signs on both sides like "5%-7%"
-    percent_range = re.search(r'(\d+(?:\.\d+)?)\s*%\s*[-–—~]\s*(\d+(?:\.\d+)?)\s*%', text, re.I)
+    percent_range = re.search(r'(-?\d+(?:\.\d+)?)\s*%\s*[-–—~]\s*(-?\d+(?:\.\d+)?)\s*%', text, re.I)
     if percent_range:
         lo = float(percent_range.group(1))
         hi = float(percent_range.group(2))
@@ -449,7 +469,7 @@ def find_guidance_paragraphs(text):
 
 def extract_guidance(text, ticker, client):
     """
-    Modified to fix the billion to million conversion issue.
+    Modified to fix negative number conversion issues.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -464,12 +484,27 @@ VERY IMPORTANT:
 - Review the ENTIRE document for ANY forward-looking statements about future performance
 - Pay special attention to sections describing "For the fiscal quarter", "For the fiscal year", "For next quarter", etc.
 - For any percentage values, always include the % symbol in your output (e.g., "5% to 7%" or "5%-7%")
-- If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
-- Preserve any descriptive text like "Approximately" or "Around" in your output
 - Be sure to capture year-over-year growth metrics as well as absolute values
 - Look for common financial metrics: Revenue, EPS, Operating Margin, Free Cash Flow, Gross Margin, etc.
 - Include both quarterly and full-year guidance if available
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
+
+CRITICAL HANDLING OF NEGATIVE VALUES:
+1. For NEGATIVE PERCENTAGES:
+   - When percentages appear with parentheses like "(10%)" or "~(10%)", this indicates a NEGATIVE value
+   - CORRECTLY output these as "-10%" with a minus sign
+   - Examples:
+     - "(5%)" or "~(5%)" should be output as "-5%"
+     - "decrease of 10%" should be output as "-10%"
+     - "(5% to 7%)" should be output as "-5% to -7%"
+
+2. For NEGATIVE DOLLAR VALUES:
+   - Values in parentheses like "$(0.01)" indicate NEGATIVE values
+   - CORRECTLY output these as "-$0.01" with a minus sign
+   - Examples:
+     - "$(0.01)" should be output as "-$0.01"
+     - "$(0.01) to $(0.03)" should be output as "-$0.01 to -$0.03"
+     - "loss of $0.01 per share" should be output as "-$0.01"
 
 CRITICAL FORMATTING FOR BILLION VALUES:
 - When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), convert it to millions by multiplying by 1000:
@@ -654,15 +689,10 @@ if st.button("🔍 Extract Guidance"):
                     use_container_width=True
                 )
                 
-                # Add download button for Excel file
+                # Add download button
+                import io
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
-                excel_buffer.seek(0)
-                st.download_button(
-                    label="📥 Download Excel",
-                    data=excel_buffer,
-                    file_name=f"{ticker}_guidance_output.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.warning("No guidance data extracted.")
