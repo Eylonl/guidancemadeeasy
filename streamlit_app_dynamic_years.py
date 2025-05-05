@@ -169,6 +169,26 @@ if st.button("🔍 Extract Guidance"):
             if year_input.strip():
                 if re.match(r'\dQ\d{2,4}', year_input.upper()):
                     target = year_input.upper()
+                    from datetime import datetime
+                    import calendar
+                    def generate_patterns(qtr, year_suffix):
+                        fy = int('20' + year_suffix)
+                        ends = {'1': (9, 30, fy - 1), '2': (12, 31, fy - 1), '3': (3, 31, fy), '4': (6, 30, fy)}
+                        month, day, year = ends[qtr]
+                        mname = calendar.month_name[month]
+                        dstr = f"{mname} {day}, {year}"
+                        q_map = {'1': 'FIRST', '2': 'SECOND', '3': 'THIRD', '4': 'FOURTH'}
+                        return [
+                            f"QUARTER ENDING {dstr.upper()}",
+                            f"QUARTER ENDED {dstr.upper()}",
+                            f"FOR THE QUARTER ENDED {dstr.upper()}",
+                            f"FOR THE QUARTER ENDING {dstr.upper()}",
+                            f"{qtr}Q{year_suffix}",
+                            f"Q{qtr} FY{year_suffix}",
+                            f"{q_map[qtr]} QUARTER FY{year_suffix}",
+                        ]
+                    q, y = target[0], target[-2:]
+                    quarter_names = generate_patterns(q, y)
                     q_map = {'1': 'FIRST', '2': 'SECOND', '3': 'THIRD', '4': 'FOURTH'}
                     q_num, fy = target[0], target[-2:]
                     quarter_names = [
