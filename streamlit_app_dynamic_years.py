@@ -1,4 +1,3 @@
-
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -9,49 +8,115 @@ import os
 import re
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
-number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
+number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB%]|million|billion|percent)?'
 
 def extract_number(token: str):
+    """Extract numeric value from string, with detection for percentages."""
     if not token or not isinstance(token, str):
         return None
-    neg = token.strip().startswith('(') and token.strip().endswith(')' )
+    neg = token.strip().startswith('(') and token.strip().endswith(')')
+    
+    # Check for percentage before removing characters
+    is_percent = '%' in token or 'percent' in token.lower()
+    
     tok = token.replace('(', '').replace(')', '').replace('$','') \
                .replace(',', '').strip().lower()
+    
+    # Remove percentage symbol but keep track that it was a percentage
+    if tok.endswith('%'):
+        tok = tok[:-1].strip()
+    elif tok.endswith('percent'):
+        tok = tok[:-7].strip()
+    
     factor = 1.0
     if tok.endswith('billion'): tok, factor = tok[:-7].strip(), 1000
     elif tok.endswith('million'): tok, factor = tok[:-7].strip(), 1
     elif tok.endswith('b'): tok, factor = tok[:-1].strip(), 1000
     elif tok.endswith('m'): tok, factor = tok[:-1].strip(), 1
     elif tok.endswith('k'): tok, factor = tok[:-1].strip(), 0.001
+    
     try:
         val = float(tok) * factor
+        if is_percent:
+            return (-val if neg else val, True)  # Return tuple with flag for percentage
         return -val if neg else val
     except:
         return None
 
 
 def format_percent(val):
+    """Format value, adding % symbol for percentages."""
     if val is None:
         return None
+    
+    # Check if val is a tuple with percentage flag
+    if isinstance(val, tuple) and len(val) == 2:
+        value, is_percent = val
+        if is_percent:
+            return f"{value:.1f}%"
+        return f"{value:.1f}"
+    
+    # Handle regular numeric values (backward compatibility)
     if isinstance(val, (int, float)):
-        return f"{val:.1f}%"
+        return f"{val:.1f}"
+    
     return val
 
+
 def parse_value_range(text: str):
+    """Parse a value range from text, handling percentages properly."""
     if not isinstance(text, str):
         return (None, None, None)
+    
+    # Check if the text represents "flat" or "unchanged"
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
-        return (0.0, 0.0, 0.0)
+        return ((0.0, False), (0.0, False), (0.0, False))
+    
+    # Check if the entire text suggests percentages
+    text_is_percent = '%' in text or re.search(r'\bpercent\b', text, re.I)
+    
+    # Look for range pattern (e.g., "5-10%")
     rng = re.search(fr'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
     if rng:
-        lo = extract_number(rng.group(1))
-        hi = extract_number(rng.group(2))
-        avg = (lo+hi)/2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
+        lo_extracted = extract_number(rng.group(1))
+        hi_extracted = extract_number(rng.group(2))
+        
+        # Process the extracted values
+        if lo_extracted is not None and hi_extracted is not None:
+            # Handle both tuple and non-tuple formats
+            if isinstance(lo_extracted, tuple):
+                lo_val, lo_is_percent = lo_extracted
+            else:
+                lo_val, lo_is_percent = lo_extracted, text_is_percent
+                
+            if isinstance(hi_extracted, tuple):
+                hi_val, hi_is_percent = hi_extracted
+            else:
+                hi_val, hi_is_percent = hi_extracted, text_is_percent
+            
+            # If either value is a percentage, treat both as percentages
+            combined_is_percent = lo_is_percent or hi_is_percent
+            
+            lo = (lo_val, combined_is_percent)
+            hi = (hi_val, combined_is_percent)
+            avg = ((lo_val + hi_val) / 2, combined_is_percent)
+            
+            return (lo, hi, avg)
+    
+    # Look for a single value (e.g., "5%")
     single = re.search(number_token, text, re.I)
     if single:
-        v = extract_number(single.group(0))
-        return (v, v, v)
+        extracted = extract_number(single.group(0))
+        if extracted is not None:
+            # Handle both tuple and non-tuple formats
+            if isinstance(extracted, tuple):
+                v_val, v_is_percent = extracted
+            else:
+                v_val, v_is_percent = extracted, text_is_percent
+                
+            v = (v_val, v_is_percent)
+            return (v, v, v)
+    
     return (None, None, None)
 
 
@@ -152,7 +217,11 @@ def split_gaap_non_gaap(df):
                 new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
                 rows.append(new_row)
         else:
-            rows.append(row)
+            # Handle regular rows with proper percentage formatting
+            new_row = row.copy()
+            lo, hi, avg = parse_value_range(row['Value'])
+            new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
+            rows.append(new_row)
     return pd.DataFrame(rows)
 
 
@@ -165,62 +234,20 @@ if st.button("🔍 Extract Guidance"):
             st.error("CIK not found for ticker.")
         else:
             client = OpenAI(api_key=api_key)
-            accessions = []
             if year_input.strip():
-                if re.match(r'\dQ\d{2,4}', year_input.upper()):
-                    target = year_input.upper()
-                    from datetime import datetime
-                    import calendar
-                    def generate_patterns(qtr, year_suffix):
-                        fy = int('20' + year_suffix)
-                        ends = {'1': (9, 30, fy - 1), '2': (12, 31, fy - 1), '3': (3, 31, fy), '4': (6, 30, fy)}
-                        month, day, year = ends[qtr]
-                        mname = calendar.month_name[month]
-                        dstr = f"{mname} {day}, {year}"
-                        q_map = {'1': 'FIRST', '2': 'SECOND', '3': 'THIRD', '4': 'FOURTH'}
-                        return [
-                            f"QUARTER ENDING {dstr.upper()}",
-                            f"QUARTER ENDED {dstr.upper()}",
-                            f"FOR THE QUARTER ENDED {dstr.upper()}",
-                            f"FOR THE QUARTER ENDING {dstr.upper()}",
-                            f"{qtr}Q{year_suffix}",
-                            f"Q{qtr} FY{year_suffix}",
-                            f"{q_map[qtr]} QUARTER FY{year_suffix}",
-                        ]
-                    q, y = target[0], target[-2:]
-                    quarter_names = generate_patterns(q, y)
-                    q_map = {'1': 'FIRST', '2': 'SECOND', '3': 'THIRD', '4': 'FOURTH'}
-                    q_num, fy = target[0], target[-2:]
-                    quarter_names = [
-                        f"{q_map[q_num]} QUARTER FY{fy}",
-                        f"Q{q_num} FY{fy}",
-                        f"FISCAL {q_map[q_num]} QUARTER {fy}",
-                        f"{q_map[q_num]} FISCAL QUARTER {fy}"
-                    ]
-                    all_recent = get_accessions(cik, 10)
-                    for acc, date_str in all_recent:
-                        links = get_ex99_1_links(cik, [(acc, date_str)])
-                        for _, _, url in links:
-                            try:
-                                html = requests.get(url, headers={"User-Agent": "DataResearchBot Contact@example.com"}).text
-                                text = BeautifulSoup(html, "html.parser").get_text()
-                                normalized = text.upper().replace("FISCAL YEAR ", "FY").replace("QUARTER", "Q")
-                                if target in normalized:
-                                    accessions.append((acc, date_str))
-                            except:
-                                continue
-                    if not accessions:
-                        st.warning(f"No filings found mentioning {target} in document text.")
-                else:
-                    try:
-                        years_back = int(year_input)
-                        accessions = get_accessions(cik, years_back)
-                    except:
-                        st.error("Invalid year input. Must be a number or quarter (e.g., 1Q25).")
+                years_back = int(year_input.strip())
+                try:
+                    years_back = int(year_input)
+                    accessions = get_accessions(cik, years_back)
+                except:
+                    st.error("Invalid year input. Must be a number.")
+                    accessions = []
             else:
                 accessions = get_most_recent_accession(cik)
+
             links = get_ex99_1_links(cik, accessions)
             results = []
+
             for date_str, acc, url in links:
                 st.write(f"📄 Processing {url}")
                 try:
@@ -233,7 +260,9 @@ if st.button("🔍 Extract Guidance"):
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                        df[['Low', 'High', 'Average']] = df["Value"].apply(lambda v: pd.Series(parse_value_range(v)))
+                        # parse low, high, and average from Value column
+                        value_col = df.columns[1]
+                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
                         df = split_gaap_non_gaap(df)
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
@@ -243,6 +272,7 @@ if st.button("🔍 Extract Guidance"):
                         st.warning("⚠️ Skipped, no guidance found in filing.")
                 except:
                     st.warning(f"Could not process: {url}")
+
             if results:
                 combined = pd.concat(results, ignore_index=True)
                 import io
