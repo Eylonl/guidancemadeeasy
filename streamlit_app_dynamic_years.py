@@ -470,12 +470,10 @@ VERY IMPORTANT:
 - Include both quarterly and full-year guidance if available
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
 
-CRITICAL FORMATTING FOR BILLION VALUES:
-- When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), you MUST multiply it by 1000 and express it in millions in your output.
-  - Example: "$1.10 billion" should be output as "$1,100 million"
-  - Example: "$1.11B" should be output as "$1,110 million"
-  - Example: A range of "$1.10-$1.11 billion" should be output as "$1,100-$1,110 million"
-- Always maintain the exact decimal precision when converting (multiply the exact number by 1000)
+IMPORTANT: FOR THE "VALUE" COLUMN:
+- Keep all values in their original format exactly as stated in the document
+- Do NOT convert billion values to millions in the "value" column
+- For example, if the document says "$1.10-$1.11 billion", output exactly "$1.10-$1.11 billion" in the value column
 
 IMPORTANT FORMATTING INSTRUCTIONS:
 - For dollar ranges, use the format "$X-$Y" (with dollar sign before each number)
@@ -484,7 +482,7 @@ IMPORTANT FORMATTING INSTRUCTIONS:
   - Example: "5%-7%" (not "5-7%")
 - For other numeric ranges, use "X-Y" format
   - Example: "100-110" (not "100 to 110")
-- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.) EXCEPT for billion values which must be converted as instructed above
+- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.)
 
 Respond in table format without commentary.\n\n{text}"""
     
@@ -643,9 +641,9 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(
                     display_df.style.format({
-                        "Low": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x,
-                        "High": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x,
-                        "Average": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x
+                        "Low": lambda x: f"{x:.0f}" if isinstance(x, (int, float)) and abs(x) >= 100 else (f"{x:.2f}" if isinstance(x, (int, float)) else x),
+                        "High": lambda x: f"{x:.0f}" if isinstance(x, (int, float)) and abs(x) >= 100 else (f"{x:.2f}" if isinstance(x, (int, float)) else x),
+                        "Average": lambda x: f"{x:.0f}" if isinstance(x, (int, float)) and abs(x) >= 100 else (f"{x:.2f}" if isinstance(x, (int, float)) else x)
                     }),
                     use_container_width=True
                 )
