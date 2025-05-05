@@ -120,15 +120,9 @@ Return a structured list containing:
 - value or range (e.g. $1.5B–$1.6B or $2.05)
 - applicable period (e.g. Q3 FY24, Full Year 2025)
 
-VERY IMPORTANT FORMATTING INSTRUCTIONS:
-1. For any percentage values, always include the % symbol in your output:
-   - If the guidance mentions "operating margin of 5 to 7 percent", output it as "5% to 7%" or "5%-7%"
-   - If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
-
-2. Be consistent with percentage formatting:
-   - If a value represents a percentage (e.g., margin, growth rate), always include the % symbol
-   - This is critical because your output will be parsed into "Low", "High", and "Average" columns
-   - The parser will only add % symbols to these columns if they appear in your original Value output
+VERY IMPORTANT: For any percentage values, always include the % symbol in your output:
+- If the guidance mentions "operating margin of 5 to 7 percent", output it as "5% to 7%" or "5%-7%"
+- If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
 
 Respond in table format without commentary.\n\n{text}"""
     try:
@@ -141,6 +135,27 @@ Respond in table format without commentary.\n\n{text}"""
     except Exception as e:
                 st.warning("⚠️ Skipped, no guidance found in filing.")
 
+
+# Function to ensure percentages in columns D, E, F if they're in column B
+def ensure_percentage_consistency(df):
+    if 'Value' not in df.columns:
+        return df
+    
+    for idx, row in df.iterrows():
+        value = str(row['Value'])
+        # Check if the Value column contains a percentage
+        if '%' in value:
+            # Make sure Low, High, and Average have percentage symbols
+            for col in ['Low', 'High', 'Average']:
+                if col in df.columns and df.at[idx, col] is not None:
+                    # If the value is numeric and doesn't already have %, add it
+                    try:
+                        val = float(str(df.at[idx, col]).rstrip('%'))
+                        df.at[idx, col] = f"{val:.1f}%"
+                    except:
+                        # If not convertible to float, leave as is
+                        pass
+    return df
 
 
 def split_gaap_non_gaap(df):
@@ -204,7 +219,13 @@ if st.button("🔍 Extract Guidance"):
                         # parse low, high, and average from Value column
                         value_col = df.columns[1]
                         df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                        
+                        # Apply GAAP/non-GAAP split
                         df = split_gaap_non_gaap(df)
+                        
+                        # Ensure percentage consistency between Value and Low/High/Average columns
+                        df = ensure_percentage_consistency(df)
+                        
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
                         results.append(df)
