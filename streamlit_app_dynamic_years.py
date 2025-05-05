@@ -216,7 +216,11 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
     ticker = st.session_state.get('ticker', '').upper()
     
     if years_back:
-        cutoff = datetime.today() - timedelta(days=365 * years_back)
+        # Modified to add one extra quarter (approximately 91.25 days)
+        # For example: 1 year = 365 + 91.25 days = 456.25 days
+        cutoff = datetime.today() - timedelta(days=(365 * years_back) + 91.25)
+        
+        st.write(f"Looking for filings from the past {years_back} years plus 1 quarter (from {cutoff.strftime('%Y-%m-%d')} to present)")
         
         for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
             if form == "8-K":
