@@ -137,13 +137,12 @@ Respond in table format without commentary.\n\n{text}"""
                 st.warning("⚠️ Skipped, no guidance found in filing.")
 
 
-
-def split_gaap_non_gaap(df, original_values):
+def split_gaap_non_gaap(df):
     if 'Value' not in df.columns or 'Metric' not in df.columns:
         return df  # Avoid crash if column names are missing
 
     rows = []
-    for idx, row in df.iterrows():
+    for _, row in df.iterrows():
         val = str(row['Value'])
         match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
         if match:
@@ -157,26 +156,8 @@ def split_gaap_non_gaap(df, original_values):
                 new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
                 rows.append(new_row)
         else:
-            # Keep the original row, but ensure it has Low, High, Average columns
-            new_row = row.copy()
-            lo, hi, avg = parse_value_range(val)
-            new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
-            rows.append(new_row)
-    
-    result_df = pd.DataFrame(rows)
-    
-    # Restore original Value column from the dictionary
-    for idx, row in result_df.iterrows():
-        metric = row['Metric']
-        if ' (GAAP)' in metric or ' (Non-GAAP)' in metric:
-            # Skip the split rows
-            continue
-        
-        # For original rows, restore the exact Value text
-        if idx < len(original_values):
-            result_df.at[idx, 'Value'] = original_values[idx]
-    
-    return result_df
+            rows.append(row)
+    return pd.DataFrame(rows)
 
 
 if st.button("🔍 Extract Guidance"):
@@ -214,33 +195,27 @@ if st.button("🔍 Extract Guidance"):
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                         
-                        # Store original values to preserve them
-                        original_values = df[df.columns[1]].copy().tolist()
-                        
                         # Store which rows have percentages in the Value column
-                        percentage_rows = {}
+                        percentage_rows = []
                         for idx, row in df.iterrows():
                             if '%' in str(row[df.columns[1]]):
-                                percentage_rows[idx] = True
+                                percentage_rows.append(idx)
+                        
+                        # Parse low, high, and average from Value column
+                        value_col = df.columns[1]
+                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
                         
                         # Apply GAAP/non-GAAP split
-                        df = split_gaap_non_gaap(df, original_values)
+                        df = split_gaap_non_gaap(df)
                         
                         # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                        for idx in percentage_rows.keys():
-                            # Add % to Low, High, Average columns for rows that had % in Value
-                            if idx < len(df):
+                        for idx in df.index:
+                            # Check if the original row had a percentage
+                            if idx in percentage_rows:
+                                # Add % to Low, High, Average columns
                                 for col in ['Low', 'High', 'Average']:
-                                    if col in df.columns and pd.notnull(df.loc[idx, col]):
-                                        # Check if it's a number and doesn't already have %
-                                        val_str = str(df.loc[idx, col])
-                                        if not val_str.endswith('%'):
-                                            try:
-                                                val = float(val_str.rstrip('%'))
-                                                df.loc[idx, col] = f"{val:.1f}%"
-                                            except:
-                                                # Not a number, leave as is
-                                                pass
+                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                        df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
                         
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
@@ -248,8 +223,8 @@ if st.button("🔍 Extract Guidance"):
                         st.success("✅ Guidance extracted from this 8-K.")
                     else:
                         st.warning("⚠️ Skipped, no guidance found in filing.")
-                except:
-                    st.warning(f"Could not process: {url}")
+                except Exception as e:
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
 
             if results:
                 combined = pd.concat(results, ignore_index=True)
