@@ -37,20 +37,47 @@ def format_percent(val):
     return val
 
 def parse_value_range(text: str):
+    """
+    Enhanced function to parse value ranges from guidance text.
+    Handles formats like "$0.08-$0.09" with dollar signs on both numbers.
+    """
     if not isinstance(text, str):
         return (None, None, None)
+    
+    # Check for "flat" or "unchanged"
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
         return (0.0, 0.0, 0.0)
+    
+    # First try to match ranges with dollar signs on both sides like "$0.08-$0.09"
+    dollar_range = re.search(r'\$\s*(\d+(?:\.\d+)?)\s*[-–—~]\s*\$\s*(\d+(?:\.\d+)?)', text, re.I)
+    if dollar_range:
+        lo = float(dollar_range.group(1))
+        hi = float(dollar_range.group(2))
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # Try to match percentage ranges with percent signs on both sides like "5%-7%"
+    percent_range = re.search(r'(\d+(?:\.\d+)?)\s*%\s*[-–—~]\s*(\d+(?:\.\d+)?)\s*%', text, re.I)
+    if percent_range:
+        lo = float(percent_range.group(1))
+        hi = float(percent_range.group(2))
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # Then try standard range formats
     rng = re.search(fr'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
     if rng:
         lo = extract_number(rng.group(1))
         hi = extract_number(rng.group(2))
         avg = (lo+hi)/2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
+    
+    # Finally check for a single value
     single = re.search(number_token, text, re.I)
     if single:
         v = extract_number(single.group(0))
         return (v, v, v)
+    
     return (None, None, None)
 
 
@@ -340,6 +367,7 @@ def get_ex99_1_links(cik, accessions):
 def extract_guidance(text, ticker, client):
     """
     Improved guidance extraction function that's fully dynamic and works for any company.
+    Enhanced to ensure proper formatting of ranges for better parsing.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -360,6 +388,15 @@ VERY IMPORTANT:
 - Look for common financial metrics: Revenue, EPS, Operating Margin, Free Cash Flow, Gross Margin, etc.
 - Include both quarterly and full-year guidance if available
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
+
+IMPORTANT FORMATTING INSTRUCTIONS:
+- For dollar ranges, use the format "$X-$Y" (with dollar sign before each number)
+  - Example: "$0.08-$0.09" (not "$0.08-0.09")
+- For percentage ranges, use the format "X%-Y%" (with % after each number)
+  - Example: "5%-7%" (not "5-7%")
+- For other numeric ranges, use "X-Y" format
+  - Example: "100-110" (not "100 to 110")
+- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.)
 
 Respond in table format without commentary.\n\n{text}"""
     
