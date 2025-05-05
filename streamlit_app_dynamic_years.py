@@ -91,12 +91,7 @@ def parse_value_range(text: str):
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
 st.title("📄 SEC 8-K Guidance Extractor")
 
-# Default fiscal configuration - only need to specify the fiscal year end month
-# All other calculations will be dynamic based on this
-DEFAULT_FISCAL_CONFIG = {
-    'fiscal_year_end_month': 12,  # Default to December (calendar year)
-    'fiscal_year_end_day': 31
-}
+# Nothing here - removed DEFAULT_FISCAL_CONFIG as it's no longer needed
 
 # Inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM, FRSH)", "TEAM").upper()
@@ -281,7 +276,7 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
             quarter_num = int(quarter)
             year_num = int(year)
             
-            # Get fiscal dates based on company's fiscal calendar from SEC data
+            # Get fiscal dates - pass the cik to avoid duplicate lookups
             fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num, cik)
             
             # Display fiscal quarter information
