@@ -7,16 +7,16 @@ import pandas as pd
 import re
 import io
 
-# PAGE SETUP
-st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
-st.title("📄 SEC 8-K Guidance Extractor")
+# ─── PAGE SETUP ────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="SEC 8‑K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8‑K Guidance Extractor")
 
-# INPUTS
-ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
-api_key = st.text_input("Enter OpenAI API Key", type="password")
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+# ─── INPUTS ────────────────────────────────────────────────────────────────────
+ticker     = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
+api_key    = st.text_input("Enter OpenAI API Key", type="password")
+year_input = st.text_input("How many years back to search for 8‑K filings? (Leave blank for most recent only)", "")
 
-# HELPER FUNCTIONS
+# ─── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
 
 def extract_number(token: str):
@@ -43,123 +43,112 @@ def extract_number(token: str):
         return None
 
 def parse_value_range(text: str):
+    """
+    Return (low, high, avg) with percentages preserved.
+      - Ranges    => strings like "20%", "25%", "22.5%"
+      - Singles   => strings like "5%", "-5%" for "(5)%"
+      - Otherwise falls back to numeric millions parsing.
+    """
     if not isinstance(text, str):
         return None, None, None
-    # percentage handling
+
+    # ------ Percentage handling ------
     if '%' in text:
-        # range A–B%
-        m = re.search(r'(?:\()?([+-]?\d+(?:\.\d+)?)(?:\))?\s*(?:[-–—~]|to)\s*(?:\()?([+-]?\d+(?:\.\d+)?)(?:\))?\s*%', text)
+        # Range A–B% or A to B%
+        m = re.search(
+            r'\(?\s*([+-]?\d+(?:\.\d+)?)\s*\)?\s*(?:[-–—~]|to)\s*\(?\s*([+-]?\d+(?:\.\d+)?)\s*\)?\s*%',
+            text
+        )
         if m:
-            low = float(m.group(1))
-            high = float(m.group(2))
-            avg = (low + high) / 2
-            # detect negative parentheses for single values
-            return f"{low}%", f"{high}%", f"{avg}%"
-        # single percentage
-        m2 = re.search(r'(?:\()?([+-]?\d+(?:\.\d+)?)(?:\))?\s*%', text)
+            lo, hi = float(m.group(1)), float(m.group(2))
+            avg = (lo + hi) / 2
+            return f"{lo}%", f"{hi}%", f"{avg}%"
+
+        # Single percentage, e.g. "5%" or "(5)%"
+        m2 = re.search(r'\(?\s*([+-]?\d+(?:\.\d+)?)\s*\)?\s*%', text)
         if m2:
             val = float(m2.group(1))
             # parentheses imply negative
             if text.strip().startswith('('):
                 val = -abs(val)
             return f"{val}%", f"{val}%", f"{val}%"
+
         return None, None, None
 
-    # flat or unchanged
+    # ------ Flat/unchanged ------
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
         return 0.0, 0.0, 0.0
-    # numeric range handling
-    rng = re.search(rf'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
+
+    # ------ Numeric range A–B or A to B ------
+    rng = re.search(
+        rf'({number_token})\s*(?:[-–—~]|to)\s*({number_token})',
+        text, re.I
+    )
     if rng:
         lo = extract_number(rng.group(1))
         hi = extract_number(rng.group(2))
         avg = (lo + hi)/2 if lo is not None and hi is not None else None
         return lo, hi, avg
-    # single numeric value
+
+    # ------ Single numeric value ------
     single = re.search(number_token, text, re.I)
     if single:
         v = extract_number(single.group(0))
         return v, v, v
+
     return None, None, None
 
-_ORD = {"first":"Q1","second":"Q2","third":"Q3","fourth":"Q4"}
-
-def normalise_period(txt: str):
-    if not isinstance(txt, str):
-        return None
-    t = txt.strip().lower()
-    m = re.search(r'(q[1-4])\s*fy\s*(\d{2,4})', t)
-    if m:
-        return f"{m.group(1).upper()} FY{m.group(2)[-2:]}"
-    m = re.search(r'(first|second|third|fourth)\s+quarter\s+fiscal\s+year\s+(\d{4})', t)
-    if m:
-        return f"{_ORD[m.group(1)]} FY{m.group(2)[-2:]}"
-    m = re.search(r'(?:fiscal|full)\s+year\s+(\d{4})', t)
-    if m:
-        return f"FY{m.group(1)[-2:]}"
-    return txt.strip()
-
-def local_extract_guidance(text: str):
-    lines = text.splitlines()
-    guidance = []
-    period = None
-    in_targets = False
-    for ln in lines:
-        low = ln.lower().strip()
-        if 'financial targets' in low:
-            in_targets = True
-            continue
-        if in_targets:
-            hdr = ln.strip().rstrip(':')
-            if re.search(r'(quarter|year)\s+fiscal\s+year', hdr, re.I):
-                period = normalise_period(hdr)
-                continue
-            if ln.strip().startswith('•') and period:
-                bullet = ln.strip().lstrip('•').strip().rstrip('.')
-                m = re.match(r'(.+?)(?:is expected to|are expected to)\s+(.+)', bullet, re.I)
-                if m:
-                    guidance.append((m.group(1).strip(), m.group(2).strip(), period))
-                continue
-            if period and ln.strip()=='':
-                break
-    return pd.DataFrame(guidance, columns=['Metric','Value','Period']) if guidance else None
-
 @st.cache_data(show_spinner=False)
-def lookup_cik(ticker):
-    headers = {'User-Agent':'Your Name contact@domain.com'}
-    data = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers).json()
-    for entry in data.values():
-        if entry['ticker'].upper()==ticker:
-            return str(entry['cik_str']).zfill(10)
+def lookup_cik(ticker: str) -> str:
+    headers = {'User-Agent': 'Your Name contact@domain.com'}
+    resp = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+    data = resp.json()
+    for ent in data.values():
+        if ent["ticker"].upper() == ticker:
+            return str(ent["cik_str"]).zfill(10)
     return None
 
-def get_accessions(cik, years_back):
-    headers = {'User-Agent':'Your Name contact@domain.com'}
-    js = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=headers).json()['filings']['recent']
+def get_accessions(cik: str, years_back: int):
+    headers = {'User-Agent': 'Your Name contact@domain.com'}
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+    js = requests.get(url, headers=headers).json()["filings"]["recent"]
     cutoff = datetime.today() - timedelta(days=365*years_back)
-    return [(an, fd) for f, fd, an in zip(js['form'], js['filingDate'], js['accessionNumber'])
-            if f=='8-K' and datetime.strptime(fd,'%Y-%m-%d')>=cutoff]
+    return [
+        (ad, fd) for f, fd, ad in
+        zip(js["form"], js["filingDate"], js["accessionNumber"])
+        if f == "8-K" and datetime.strptime(fd, "%Y-%m-%d") >= cutoff
+    ]
 
-def get_most_recent_accession(cik):
-    accs = get_accessions(cik,10)
+def get_most_recent_accession(cik: str):
+    accs = get_accessions(cik, 10)
     return accs[:1] if accs else []
 
-def get_ex99_1_links(cik, accessions):
-    headers = {'User-Agent':'Your Name contact@domain.com'}
+def get_ex99_1_links(cik: str, accessions):
+    headers = {'User-Agent': 'Your Name contact@domain.com'}
     links = []
     for an, fd in accessions:
         base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{an.replace('-','')}/"
-        idx = base + f"{an}-index.htm"
-        soup = BeautifulSoup(requests.get(idx, headers=headers).text, "html.parser")
+        idx  = base + f"{an}-index.htm"
+        r = requests.get(idx, headers=headers)
+        if r.status_code != 200:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        # look for any exhibit file starting with ex991*.htm/html
         for a in soup.find_all("a", href=True):
-            if re.match(r"(?i)^ex991.*\.(htm|html)$", a['href'].strip()):
-                url = a['href'] if a['href'].lower().startswith('http') else base + a['href']
-                links.append((fd, url))
+            href = a["href"].strip()
+            if re.match(r"(?i)^ex991.*\.(htm|html)$", href):
+                full = href if href.lower().startswith("http") else base + href
+                links.append((fd, full))
                 break
     return links
 
-def extract_guidance(text, ticker, client):
-    prompt = f"You are a financial analyst assistant. Extract forward-looking guidance for {ticker} in a Markdown table Metric|Value|Period.\n\n{text}"
+def extract_guidance(text: str, ticker: str, client: OpenAI):
+    prompt = (
+        f"You are a financial analyst assistant. Extract all forward-looking guidance "
+        f"given in this earnings release for {ticker}.\n\n"
+        f"Return a Markdown table with columns Metric|Value|Period.\n\n"
+        f"{text}"
+    )
     try:
         resp = client.chat.completions.create(
             model="gpt-4", messages=[{"role":"user","content":prompt}], temperature=0
@@ -168,52 +157,83 @@ def extract_guidance(text, ticker, client):
     except:
         return None
 
+# ─── MAIN ────────────────────────────────────────────────────────────────────────
 if st.button("🔍 Extract Guidance"):
     if not ticker:
-        st.error("Enter a ticker."); st.stop()
+        st.error("Please enter a ticker."); st.stop()
     cik = lookup_cik(ticker)
     if not cik:
         st.error("CIK not found."); st.stop()
-    yrs = int(year_input) if year_input.strip().isdigit() else None
-    accs = get_accessions(cik, yrs) if yrs else get_most_recent_accession(cik)
+
+    # choose filings
+    if year_input.strip().isdigit():
+        yrs = int(year_input.strip())
+        accs = get_accessions(cik, yrs)
+    else:
+        accs = get_most_recent_accession(cik)
+
+    if not accs:
+        st.warning("No 8-K filings found."); st.stop()
+
     links = get_ex99_1_links(cik, accs)
     if not links:
-        st.warning("No Ex-99.1 links."); st.stop()
+        st.warning("No Ex‑99.1 links found."); st.stop()
+
     client = OpenAI(api_key=api_key) if api_key else None
     results = []
+
     for fd, url in links:
         st.write(f"📄 Processing {url}")
-        text = BeautifulSoup(requests.get(url, headers={'User-Agent':'MyCo'}).text, "html.parser").get_text()
-        idx = text.lower().find("forward looking statements")
-        if idx>=0: text = text[:idx]
+        html = requests.get(url, headers={'User-Agent':'MyCo'}).text
+        text = BeautifulSoup(html, "html.parser").get_text()
+        cut = text.lower().find("forward looking statements")
+        if cut != -1:
+            text = text[:cut]
+
+        # GPT extraction
         df = None
         if client:
             md = extract_guidance(text, ticker, client)
-            if md and '|' in md:
-                lines = [l for l in md.splitlines() if l.strip().startswith('|')]
-                hdr = [h.strip() for h in lines[0].split('|')[1:-1]]
-                rows = [[p.strip() for p in l.split('|')[1:-1]] for l in lines[2:] if len(l.split('|')[1:-1])==len(hdr)]
-                if rows:
-                    df = pd.DataFrame(rows, columns=hdr)
+            if md and "|" in md:
+                lines = [l for l in md.splitlines() if l.strip().startswith("|")]
+                if len(lines) >= 2:
+                    hdr = [h.strip() for h in lines[0].split("|")[1:-1]]
+                    rows = [
+                        [p.strip() for p in ln.split("|")[1:-1]]
+                        for ln in lines[2:]
+                        if len(ln.split("|")[1:-1]) == len(hdr)
+                    ]
+                    if rows:
+                        df = pd.DataFrame(rows, columns=hdr)
+
+        # finalize
         if df is None:
-            df = local_extract_guidance(text)
-            if df is not None:
-                st.info("ℹ️ Used local guidance parser.")
-        if df is None:
-            st.warning("⚠️ No guidance found; skipping."); continue
-        if 'Value' in df.columns:
-            df[['Low','High','Average']] = df['Value'].apply(lambda v: pd.Series(parse_value_range(v)))
-        if 'Period' in df.columns:
-            df['Period'] = df['Period'].apply(lambda p: normalise_period(p) or p)
-        df['FilingDate'] = fd
-        df['8K_Link'] = url
+            st.warning("⚠️ No guidance found; skipping.")
+            continue
+
+        # add Low/High/Average
+        if "Value" in df.columns:
+            df[["Low","High","Average"]] = df["Value"].apply(lambda v: pd.Series(parse_value_range(v)))
+
+        # normalize periods
+        if "Period" in df.columns:
+            df["Period"] = df["Period"].apply(lambda p: normalise_period(p) or p)
+
+        df["FilingDate"] = fd
+        df["8K_Link"]    = url
         results.append(df)
+        st.success("✅ Guidance extracted.")
+
+    # combine & download
     if results:
         combined = pd.concat(results, ignore_index=True)
         buf = io.BytesIO()
         combined.to_excel(buf, index=False)
-        st.download_button("📥 Download Excel", data=buf.getvalue(),
-                           file_name=f"{ticker}_guidance.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            label="📥 Download Excel",
+            data=buf.getvalue(),
+            file_name=f"{ticker}_guidance.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
         st.warning("No guidance extracted.")
