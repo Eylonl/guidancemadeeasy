@@ -71,20 +71,47 @@ def get_ex99_1_links(cik, accessions):
 
 
 def extract_guidance(text, ticker, client):
-    prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker}. 
+    prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance given in this earnings release for {ticker}. 
 
-IMPORTANT: When a metric has both GAAP and non-GAAP values, split them into separate rows in your table.
-For example, if you see: "Gross margin of 81.5% to 82.0% on a GAAP basis and in the range of 84.0% to 84.5% on a non-GAAP basis"
-Create TWO separate rows:
-1. Metric: Gross margin (GAAP), Value: 81.5% to 82.0%, Period: [applicable period]
-2. Metric: Gross margin (non-GAAP), Value: 84.0% to 84.5%, Period: [applicable period]
+IMPORTANT INSTRUCTIONS:
+1. When a metric has both GAAP and non-GAAP values, split them into separate rows in your table.
+   For example, if you see: "Gross margin of 81.5% to 82.0% on a GAAP basis and in the range of 84.0% to 84.5% on a non-GAAP basis"
+   Create TWO separate rows:
+   - Metric: Gross margin (GAAP), Value: 81.5% to 82.0%, Period: [applicable period]
+   - Metric: Gross margin (non-GAAP), Value: 84.0% to 84.5%, Period: [applicable period]
 
-Return a structured list containing:
-- metric (e.g. Revenue, EPS, Operating Margin)
-- value or range (e.g. $1.5B–$1.6B or $2.05)
-- applicable period (e.g. Q3 FY24, Full Year 2025)
+2. Extract BOTH quarterly and full-year guidance:
+   - Look for phrases like "for Q4'24" and "in FY24" or "full year FY24"
+   - Clearly identify the period in your table (Q4 FY24, Full Year FY24, etc.)
 
-Respond in table format without commentary.\n\n{text}"""
+3. Look for ALL types of forward-looking statements, including:
+   - Expected margins (operating margin, gross margin)
+   - Revenue guidance (total, cloud, data center)
+   - Growth percentages and rates
+   - Stock dilution estimates
+   - Free cash flow projections
+   - Any targets for future fiscal years/quarters
+
+4. Pay special attention to statements that mention:
+   - "We expect..."
+   - "We continue to expect..."
+   - "Our guidance assumes..."
+   - "This guidance implies..."  
+   - "...to be approximately X%"
+   - Long-term targets (e.g., "by FY27")
+   - All future periods (quarters or years)
+
+5. Look for full-year guidance implied by quarterly guidance:
+   - For example: "This guidance implies full year FY24 revenue growth of approximately 23%"
+   - Create a separate row for this implied full-year guidance
+
+Return a structured table with these columns:
+- metric (e.g. Revenue, EPS, Operating Margin, Total Revenue Growth)
+- value or range (e.g. $1.5B–$1.6B or $2.05, 30%, etc.)
+- applicable period (e.g. Q1 FY25, Full Year 2025, FY27)
+
+Respond in table format without commentary. If no forward-looking guidance is found, respond with "No guidance found."
+\n\n{text}"""
     try:
         response = client.chat.completions.create(
             model="gpt-4",
