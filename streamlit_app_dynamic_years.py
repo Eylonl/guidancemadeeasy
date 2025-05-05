@@ -94,7 +94,7 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
                     accessions.append((accession, date_str))
     
     elif specific_quarter:
-        # Parse quarter and year from input format like "3Q25" or "Q4FY24"
+        # Parse quarter and year from input format like "2Q25" or "Q2FY24"
         match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:FY)?(\d{2}|\d{4})', specific_quarter.upper())
         if match:
             quarter = match.group(1) or match.group(2)
@@ -128,17 +128,45 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
             # Add a buffer period after quarter end for earnings releases (typically 1-2 months)
             end_date = end_date + timedelta(days=60)
             
+            st.write(f"Looking for filings related to Quarter {quarter_num} of {year_num}")
+            st.write(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+            
+            # For debugging purposes, show the available filings
+            quarter_filings = []
             for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
                 if form == "8-K":
                     date = datetime.strptime(date_str, "%Y-%m-%d")
                     if start_date <= date <= end_date:
-                        accessions.append((accession, date_str))
+                        quarter_filings.append((date_str, accession))
+            
+            if not quarter_filings:
+                st.warning(f"No 8-K filings found within the date range for {specific_quarter}")
+                
+                # Show available dates for reference
+                available_dates = []
+                for form, date_str in zip(filings["form"], filings["filingDate"]):
+                    if form == "8-K":
+                        available_dates.append(date_str)
+                
+                if available_dates:
+                    st.write("Available 8-K filing dates:")
+                    for date in available_dates[:10]:  # Show only the first 10 to avoid cluttering
+                        st.write(f"- {date}")
+                    if len(available_dates) > 10:
+                        st.write(f"... and {len(available_dates) - 10} more")
+            
+            # Add the filings to the accessions list
+            accessions.extend(quarter_filings)
     
     else:  # Default: most recent only
         for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
             if form == "8-K":
                 accessions.append((accession, date_str))
                 break
+    
+    # Show debug info about the selected accessions
+    if accessions:
+        st.write(f"Found {len(accessions)} relevant 8-K filings")
     
     return accessions
 
