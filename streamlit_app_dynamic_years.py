@@ -201,10 +201,12 @@ Return a structured list containing:
 - value or range (e.g. $1.5B–$1.6B or $2.05)
 - applicable period (e.g. Q3 FY24, Full Year 2025)
 
-VERY IMPORTANT: For any percentage values, always include the % symbol in your output:
-- If the guidance mentions "operating margin of 5 to 7 percent", output it as "5% to 7%" or "5%-7%"
+VERY IMPORTANT:
+- Look for sections titled 'Outlook', 'Guidance', 'Financial Outlook', 'Business Outlook', or similar
+- For any percentage values, always include the % symbol in your output (e.g., "5% to 7%" or "5%-7%")
 - If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
 - Preserve any descriptive text like "Approximately" or "Around" in your output
+- Be sure to capture year-over-year growth metrics as well as absolute values
 
 Respond in table format without commentary.\n\n{text}"""
     try:
@@ -215,7 +217,8 @@ Respond in table format without commentary.\n\n{text}"""
         )
         return response.choices[0].message.content
     except Exception as e:
-                st.warning("⚠️ Skipped, no guidance found in filing.")
+        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
+        return None
 
 
 def split_gaap_non_gaap(df):
@@ -277,42 +280,80 @@ if st.button("🔍 Extract Guidance"):
                 try:
                     html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
                     text = BeautifulSoup(html, "html.parser").get_text()
-                    forw_idx = text.lower().find("forward looking statements")
-                    if forw_idx != -1:
-                        text = text[:forw_idx]
-                    table = extract_guidance(text, ticker, client)
+                    
+                    # Search for guidance-related sections in the text
+                    outlook_sections = []
+                    outlook_keywords = ["outlook", "guidance", "financial outlook", "business outlook", "forecast"]
+                    
+                    # First, try to find sections with these keywords in headers
+                    for keyword in outlook_keywords:
+                        pattern = re.compile(fr'(?i)(?:^|\n|\r)\s*{keyword}[^\n\r]*(?:\n|\r)', re.MULTILINE)
+                        matches = pattern.finditer(text)
+                        for match in matches:
+                            start_pos = match.start()
+                            # Find a reasonable endpoint for this section (next header or a certain number of paragraphs)
+                            next_header = re.search(r'(?:\n|\r)\s*[A-Z][^\n\r]*(?:\n|\r)', text[start_pos+100:])
+                            end_pos = start_pos + 100 + next_header.start() if next_header else min(start_pos + 5000, len(text))
+                            outlook_sections.append(text[start_pos:end_pos])
+                    
+                    # If we couldn't find specific sections, try a broader approach
+                    if not outlook_sections:
+                        # Look for forward-looking statements
+                        forw_idx = text.lower().find("forward-looking statements")
+                        if forw_idx != -1:
+                            # Capture the text leading up to forward-looking statements disclaimer
+                            outlook_sections.append(text[:forw_idx])
+                        else:
+                            # If all else fails, use the full document
+                            outlook_sections.append(text)
+                    
+                    # If we found multiple sections, prioritize them by relevance
+                    # Combine the most promising sections for extraction
+                    combined_text = "\n\n".join(outlook_sections[:3])  # Use up to 3 most relevant sections
+                    
+                    # Now extract guidance from the identified sections
+                    table = extract_guidance(combined_text, ticker, client)
+                    
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                        df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                        
-                        # Store which rows have percentages in the Value column
-                        percentage_rows = []
-                        for idx, row in df.iterrows():
-                            if '%' in str(row[df.columns[1]]):
-                                percentage_rows.append(idx)
-                        
-                        # Parse low, high, and average from Value column
-                        value_col = df.columns[1]
-                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                        
-                        # Apply GAAP/non-GAAP split
-                        df = split_gaap_non_gaap(df)
-                        
-                        # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                        for idx in df.index:
-                            # Check if the original row had a percentage
-                            if idx in percentage_rows:
-                                # Add % to Low, High, Average columns
-                                for col in ['Low', 'High', 'Average']:
-                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                        df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                        
-                        df["FilingDate"] = date_str
-                        df["8K_Link"] = url
-                        results.append(df)
-                        st.success("✅ Guidance extracted from this 8-K.")
+                        if len(rows) > 1:  # Check if we have header and at least one row of data
+                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                            
+                            # Store which rows have percentages in the Value column
+                            percentage_rows = []
+                            for idx, row in df.iterrows():
+                                if '%' in str(row[df.columns[1]]):
+                                    percentage_rows.append(idx)
+                            
+                            # Parse low, high, and average from Value column
+                            value_col = df.columns[1]
+                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                            
+                            # Apply GAAP/non-GAAP split
+                            df = split_gaap_non_gaap(df)
+                            
+                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                            for idx in df.index:
+                                # Check if the original row had a percentage
+                                if idx in percentage_rows:
+                                    # Add % to Low, High, Average columns
+                                    for col in ['Low', 'High', 'Average']:
+                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                            df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                            
+                            df["FilingDate"] = date_str
+                            df["8K_Link"] = url
+                            results.append(df)
+                            st.success("✅ Guidance extracted from this 8-K.")
+                        else:
+                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
                     else:
-                        st.warning("⚠️ Skipped, no guidance found in filing.")
+                        st.warning(f"⚠️ No guidance table found in {url}")
+                        
+                        # Show a sample of the text to help debug
+                        sample_length = min(500, len(text))
+                        st.write(f"Sample of document text (first {sample_length} characters):")
+                        st.text(text[:sample_length] + "...")
                 except Exception as e:
                     st.warning(f"Could not process: {url}. Error: {str(e)}")
 
