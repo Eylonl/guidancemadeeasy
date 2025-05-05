@@ -170,9 +170,8 @@ if st.button("🔍 Extract Guidance"):
         else:
             client = OpenAI(api_key=api_key)
             if year_input.strip():
-                years_back = int(year_input.strip())
                 try:
-                    years_back = int(year_input)
+                    years_back = int(year_input.strip())
                     accessions = get_accessions(cik, years_back)
                 except:
                     st.error("Invalid year input. Must be a number.")
@@ -197,7 +196,10 @@ if st.button("🔍 Extract Guidance"):
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                         
                         # Store which rows have percentages in the Value column
-                        has_percent = df[df.columns[1]].apply(lambda x: '%' in str(x))
+                        percentage_rows = {}
+                        for idx, row in df.iterrows():
+                            if '%' in str(row[df.columns[1]]):
+                                percentage_rows[idx] = True
                         
                         # Parse low, high, and average from Value column
                         value_col = df.columns[1]
@@ -206,12 +208,22 @@ if st.button("🔍 Extract Guidance"):
                         # Apply GAAP/non-GAAP split
                         df = split_gaap_non_gaap(df)
                         
-                        # Add % symbol to Low, High, Average columns if % was in the Value column
-                        for i, has_pct in enumerate(has_percent):
-                            if has_pct and i < len(df):
+                        # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                        for idx in df.index:
+                            # Check if this is a percentage row
+                            if idx in percentage_rows:
+                                # Add % to Low, High, Average columns
                                 for col in ['Low', 'High', 'Average']:
-                                    if df.at[i, col] is not None and isinstance(df.at[i, col], (int, float)):
-                                        df.at[i, col] = f"{df.at[i, col]:.1f}%"
+                                    if col in df.columns and pd.notnull(df.loc[idx, col]):
+                                        # Check if it's a number and doesn't already have %
+                                        val_str = str(df.loc[idx, col])
+                                        if not val_str.endswith('%'):
+                                            try:
+                                                val = float(val_str.rstrip('%'))
+                                                df.loc[idx, col] = f"{val:.1f}%"
+                                            except:
+                                                # Not a number, leave as is
+                                                pass
                         
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
