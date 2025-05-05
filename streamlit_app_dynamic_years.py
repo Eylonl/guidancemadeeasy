@@ -600,3 +600,4 @@ def parse_value_range(text: str) -> Tuple[Optional[float], Optional[float], Opti
         return val, val, val
 
     return None, None, None
+    
