@@ -40,7 +40,6 @@ def parse_value_range(text: str):
     """
     Enhanced function to parse value ranges from guidance text.
     Handles formats like "$0.08-$0.09" with dollar signs on both numbers.
-    Special handling for billion values to ensure proper average calculation.
     """
     if not isinstance(text, str):
         return (None, None, None)
@@ -68,20 +67,9 @@ def parse_value_range(text: str):
     # Then try standard range formats
     rng = re.search(fr'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
     if rng:
-        # Get the full first and second parts of the range
-        first_part = rng.group(1)
-        second_part = rng.group(2)
-        
-        # Extract the numerical values
-        lo = extract_number(first_part)
-        hi = extract_number(second_part)
-        
-        # Calculate average
-        if lo is not None and hi is not None:
-            avg = (lo + hi) / 2
-        else:
-            avg = None
-            
+        lo = extract_number(rng.group(1))
+        hi = extract_number(rng.group(2))
+        avg = (lo+hi)/2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
     
     # Finally check for a single value
@@ -460,7 +448,7 @@ def find_guidance_paragraphs(text):
 
 def extract_guidance(text, ticker, client):
     """
-    Simple and clear instructions for the prompt.
+    Modified to work with just the guidance paragraphs instead of the full text.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -481,10 +469,9 @@ VERY IMPORTANT:
 - Look for common financial metrics: Revenue, EPS, Operating Margin, Free Cash Flow, Gross Margin, etc.
 - Include both quarterly and full-year guidance if available
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
+- For the value column, keep all values in their original format exactly as stated in the document (don't convert billion to million)
 
 IMPORTANT FORMATTING INSTRUCTIONS:
-- Keep all values in their original format exactly as stated in the document
-- When dealing with values in billions, please keep the original format (e.g., "$1.10-$1.11 billion")
 - For dollar ranges, use the format "$X-$Y" (with dollar sign before each number)
   - Example: "$0.08-$0.09" (not "$0.08-0.09")
 - For percentage ranges, use the format "X%-Y%" (with % after each number)
