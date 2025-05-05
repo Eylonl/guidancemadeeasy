@@ -254,6 +254,9 @@ if st.button("🔍 Extract Guidance"):
         else:
             client = OpenAI(api_key=api_key)
             
+            # Store the ticker for later use by the get_accessions function
+            st.session_state['ticker'] = ticker
+            
             # Handle different filtering options
             if quarter_input.strip():
                 # Quarter input takes precedence over other options, including blank years_back
