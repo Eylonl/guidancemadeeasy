@@ -1,4 +1,38 @@
-import streamlit as st
+def get_fiscal_year_end(ticker, cik=None):
+    """
+    Get the fiscal year end month for a company by querying SEC data.
+    Returns the month number (1-12) of the fiscal year end.
+    """
+    try:
+        if not cik:
+            cik = lookup_cik(ticker)
+            
+        if not cik:
+            st.warning(f"Could not find CIK for {ticker}. Using default fiscal year (December).")
+            return 12, 31  # Default to calendar year (December 31)
+            
+        # Query the SEC submission data to find fiscal year end
+        headers = {'User-Agent': 'Your Name Contact@domain.com'}
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        resp = requests.get(url, headers=headers)
+        data = resp.json()
+        
+        # Get fiscal year end date
+        if 'fiscalYearEnd' in data:
+            fiscal_year_end = data['fiscalYearEnd']  # Format is "MMDD"
+            month = int(fiscal_year_end[:2])
+            day = int(fiscal_year_end[2:])
+            
+            month_name = datetime(2000, month, 1).strftime('%B')
+            st.write(f"Retrieved fiscal year end for {ticker}: {month_name} {day}")
+            
+            return month, day
+        else:
+            st.warning(f"Could not find fiscal year end for {ticker} in SEC data. Using default fiscal year (December).")
+            return 12, 31  # Default to calendar year (December 31)
+    except Exception as e:
+        st.error(f"Error retrieving fiscal year end for {ticker}: {str(e)}")
+        return 12, 31  # Default to calendar year (December 31)import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -57,75 +91,11 @@ def parse_value_range(text: str):
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
 st.title("📄 SEC 8-K Guidance Extractor")
 
-# Company Fiscal Year Configuration
-FISCAL_YEAR_CONFIG = {
-    'TEAM': {
-        'fiscal_year_end_month': 6,  # June
-        'fiscal_year_end_day': 30,
-        'quarters': {
-            1: {'start_month': 7, 'end_month': 9},    # Q1: Jul-Sep
-            2: {'start_month': 10, 'end_month': 12},  # Q2: Oct-Dec
-            3: {'start_month': 1, 'end_month': 3},    # Q3: Jan-Mar
-            4: {'start_month': 4, 'end_month': 6}     # Q4: Apr-Jun
-        },
-        'earnings_report_offset': {
-            1: {'months': 1, 'days': 15},  # Q1 reported ~Oct 15 - Nov 15
-            2: {'months': 1, 'days': 15},  # Q2 reported ~Jan 15 - Feb 15
-            3: {'months': 1, 'days': 15},  # Q3 reported ~Apr 15 - May 15
-            4: {'months': 1, 'days': 15}   # Q4 reported ~Jul 15 - Aug 15
-        }
-    },
-    'FRSH': {
-        'fiscal_year_end_month': 12,  # December
-        'fiscal_year_end_day': 31,
-        'quarters': {
-            1: {'start_month': 1, 'end_month': 3},    # Q1: Jan-Mar
-            2: {'start_month': 4, 'end_month': 6},    # Q2: Apr-Jun
-            3: {'start_month': 7, 'end_month': 9},    # Q3: Jul-Sep
-            4: {'start_month': 10, 'end_month': 12}   # Q4: Oct-Dec
-        },
-        'earnings_report_offset': {
-            1: {'months': 1, 'days': 0},  # Q1 reported ~Apr 15 - May 15
-            2: {'months': 1, 'days': 0},  # Q2 reported ~Jul 15 - Aug 15
-            3: {'months': 1, 'days': 0},  # Q3 reported ~Oct 15 - Nov 15
-            4: {'months': 1, 'days': 15}  # Q4 reported ~Jan 15 - Feb 15
-        }
-    },
-    'ORCL': {
-        'fiscal_year_end_month': 5,  # May
-        'fiscal_year_end_day': 31,
-        'quarters': {
-            1: {'start_month': 6, 'end_month': 8},    # Q1: Jun-Aug
-            2: {'start_month': 9, 'end_month': 11},   # Q2: Sep-Nov
-            3: {'start_month': 12, 'end_month': 2},   # Q3: Dec-Feb
-            4: {'start_month': 3, 'end_month': 5}     # Q4: Mar-May
-        },
-        'earnings_report_offset': {
-            1: {'months': 1, 'days': 0},  # Q1 reported ~Sep 15 - Oct 15
-            2: {'months': 1, 'days': 0},  # Q2 reported ~Dec 15 - Jan 15
-            3: {'months': 1, 'days': 0},  # Q3 reported ~Mar 15 - Apr 15
-            4: {'months': 1, 'days': 0}   # Q4 reported ~Jun 15 - Jul 15
-        }
-    }
-    # Add more companies as needed
-}
-
-# Default fiscal configuration for companies not in our database
+# Default fiscal configuration - only need to specify the fiscal year end month
+# All other calculations will be dynamic based on this
 DEFAULT_FISCAL_CONFIG = {
-    'fiscal_year_end_month': 12,  # December
-    'fiscal_year_end_day': 31,
-    'quarters': {
-        1: {'start_month': 1, 'end_month': 3},     # Q1: Jan-Mar
-        2: {'start_month': 4, 'end_month': 6},     # Q2: Apr-Jun
-        3: {'start_month': 7, 'end_month': 9},     # Q3: Jul-Sep
-        4: {'start_month': 10, 'end_month': 12}    # Q4: Oct-Dec
-    },
-    'earnings_report_offset': {
-        1: {'months': 1, 'days': 0},  # Q1 reported ~Apr 15 - May 15
-        2: {'months': 1, 'days': 0},  # Q2 reported ~Jul 15 - Aug 15
-        3: {'months': 1, 'days': 0},  # Q3 reported ~Oct 15 - Nov 15
-        4: {'months': 1, 'days': 15}  # Q4 reported ~Jan 15 - Feb 15
-    }
+    'fiscal_year_end_month': 12,  # Default to December (calendar year)
+    'fiscal_year_end_day': 31
 }
 
 # Inputs
@@ -147,53 +117,76 @@ def lookup_cik(ticker):
             return str(entry["cik_str"]).zfill(10)
 
 
-def get_fiscal_dates(ticker, quarter_num, year_num):
+def get_fiscal_dates(ticker, quarter_num, year_num, cik=None):
     """
     Calculate the appropriate date range for a company's fiscal quarter
-    based on its fiscal year configuration.
+    based on its fiscal year end from SEC data.
     """
-    # Get fiscal year config for the company or use default
-    config = FISCAL_YEAR_CONFIG.get(ticker, DEFAULT_FISCAL_CONFIG)
+    # Get fiscal year end month and day from SEC data
+    fiscal_year_end_month, fiscal_year_end_day = get_fiscal_year_end(ticker, cik)
     
-    # Parse quarter configuration
-    quarter_info = config['quarters'].get(quarter_num, {})
-    start_month = quarter_info['start_month']
-    end_month = quarter_info['end_month']
-    fiscal_year_end_month = config['fiscal_year_end_month']
+    # Build a config object with fiscal year end information
+    config = {
+        'fiscal_year_end_month': fiscal_year_end_month,
+        'fiscal_year_end_day': fiscal_year_end_day
+    }
     
-    # Show fiscal configuration information
-    st.write(f"Using fiscal configuration for {ticker}")
-    st.write(f"Fiscal year ends in month {fiscal_year_end_month} ({datetime(2000, fiscal_year_end_month, 1).strftime('%B')})")
-    st.write(f"Quarter {quarter_num} spans months {start_month}-{end_month} ({datetime(2000, start_month, 1).strftime('%B')}-{datetime(2000, end_month, 1).strftime('%B')})")
-    
-    # Determine the calendar year of the first month in this fiscal year
-    # For example, if FY2024 ends in May 2024, it starts in June 2023
+    # Calculate fiscal year start month (the month after fiscal year end)
     fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
     
-    # For FY2024:
-    # If fiscal year ends in May 2024 (month 5), fiscal year starts in June 2023 (month 6)
-    # If fiscal year ends in December 2024 (month 12), fiscal year starts in January 2024 (month 1)
+    # Generate quarter configuration dynamically based on fiscal year end
+    # This ensures correct quarters regardless of when the fiscal year ends
+    quarters = {}
+    current_month = fiscal_year_start_month
     
-    # Determine if the requested quarter's start month is in the first or second calendar year of the fiscal year
-    if start_month >= fiscal_year_start_month:
-        # First calendar year of fiscal year
-        # Example: For Oracle FY2024 (Jun 2023-May 2024), Q1 and Q2 start in 2023
-        start_calendar_year = year_num - 1
-    else:
-        # Second calendar year of fiscal year
-        # Example: For Oracle FY2024 (Jun 2023-May 2024), Q4 starts in 2024
-        start_calendar_year = year_num
+    for q in range(1, 5):  # Generate all 4 quarters
+        start_month = current_month
+        
+        # Each quarter is 3 months
+        end_month = (start_month + 2) % 12
+        if end_month == 0:  # Handle December (month 0 becomes month 12)
+            end_month = 12
+            
+        quarters[q] = {'start_month': start_month, 'end_month': end_month}
+        
+        # Move to next quarter's start month
+        current_month = (end_month % 12) + 1
     
-    # For standard calendar year companies (fiscal year = calendar year)
+    # Use our dynamically generated quarters
+    quarter_info = quarters.get(quarter_num, {})
+    start_month = quarter_info['start_month']
+    end_month = quarter_info['end_month']
+    
+    # Show fiscal configuration information
+    st.write(f"Using fiscal calendar for {ticker} (Fiscal year ends: {datetime(2000, fiscal_year_end_month, 1).strftime('%B')} {fiscal_year_end_day})")
+    st.write(f"Quarter {quarter_num} spans months {start_month}-{end_month} " + 
+             f"({datetime(2000, start_month, 1).strftime('%B')}-{datetime(2000, end_month, 1).strftime('%B')})")
+    
+    # CALENDAR YEAR CALCULATION
+    # For FY2024 that ends in May 2024:
+    #   Q1 (Jun-Aug 2023): First quarter, in previous calendar year
+    #   Q2 (Sep-Nov 2023): Second quarter, in previous calendar year
+    #   Q3 (Dec 2023-Feb 2024): Third quarter, spans calendar years
+    #   Q4 (Mar-May 2024): Fourth quarter, in current calendar year
+    
+    # First determine the calendar year for the START date of this quarter
     if fiscal_year_end_month == 12:
-        # Simple case - just use the fiscal year directly
+        # Calendar fiscal year (Jan-Dec) - simple case
         start_calendar_year = year_num
+    else:
+        # Non-calendar fiscal year
+        # If quarter starts in months after fiscal year end but before calendar year end
+        if start_month > fiscal_year_end_month:
+            start_calendar_year = year_num - 1
+        else:
+            start_calendar_year = year_num
     
-    # Calculate end date calendar year
+    # Next determine the calendar year for the END date of this quarter
     end_calendar_year = start_calendar_year
+    
+    # If end month is less than start month, it means the quarter spans calendar years
+    # Example: Q3 of Oracle is Dec-Feb
     if end_month < start_month:
-        # Quarter spans calendar years
-        # Example: Oracle Q3 FY2024: Dec 2023-Feb 2024
         end_calendar_year = start_calendar_year + 1
     
     # Create actual date objects
@@ -213,14 +206,19 @@ def get_fiscal_dates(ticker, quarter_num, year_num):
     
     end_date = datetime(end_calendar_year, end_month, end_day)
     
-    # Calculate expected earnings report dates (typically a few weeks after quarter end)
+    # Calculate expected earnings report dates
     report_start = end_date + timedelta(days=15)
-    report_end = report_start + timedelta(days=45)  # Typical reporting window
+    report_end = report_start + timedelta(days=45)
     
     # Output info about the dates
     quarter_period = f"Q{quarter_num} FY{year_num}"
     period_description = f"{start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}"
     expected_report = f"~{report_start.strftime('%B %d, %Y')} to {report_end.strftime('%B %d, %Y')}"
+    
+    # Debug: Show all quarters
+    st.write("All quarters for this fiscal calendar:")
+    for q, dates in quarters.items():
+        st.write(f"Q{q}: {datetime(2000, dates['start_month'], 1).strftime('%B')}-{datetime(2000, dates['end_month'], 1).strftime('%B')}")
     
     return {
         'quarter_period': quarter_period,
@@ -283,8 +281,8 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
             quarter_num = int(quarter)
             year_num = int(year)
             
-            # Get fiscal dates based on company's fiscal calendar
-            fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num)
+            # Get fiscal dates based on company's fiscal calendar from SEC data
+            fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num, cik)
             
             # Display fiscal quarter information
             st.write(f"Looking for {ticker} {fiscal_info['quarter_period']} filings")
