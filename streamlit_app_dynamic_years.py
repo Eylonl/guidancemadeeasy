@@ -29,6 +29,14 @@ def extract_number(token: str):
     except:
         return None
 
+
+def format_percent(val):
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return f"{val:.1f}%"
+    return val
+
 def parse_value_range(text: str):
     if not isinstance(text, str):
         return (None, None, None)
@@ -124,6 +132,30 @@ Respond in table format without commentary.\n\n{text}"""
                 st.warning("⚠️ Skipped, no guidance found in filing.")
 
 
+
+def split_gaap_non_gaap(df):
+    rows = []
+    for _, row in df.iterrows():
+        val = row['Value']
+        match = re.search(r'(.*?)(\d[\d\.\s%to–-]*)(.*?GAAP).*?(\d[\d\.\s%to–-]*)\s*(.*?non-GAAP)', val, re.I)
+        if match:
+            gaap_val = f"{match.group(2).strip()} {match.group(3).strip()}"
+            non_gaap_val = f"{match.group(4).strip()} {match.group(5).strip()}"
+            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
+                new_row = row.copy()
+                new_row["Value"] = new_val
+                new_row["Metric"] = f"{row['Metric']} ({label})"
+                lo, hi, avg = parse_value_range(new_val)
+                new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
+                rows.append(new_row)
+        else:
+            row["Low"] = format_percent(row["Low"])
+            row["High"] = format_percent(row["High"])
+            row["Average"] = format_percent(row["Average"])
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -162,6 +194,7 @@ if st.button("🔍 Extract Guidance"):
                         # parse low, high, and average from Value column
                         value_col = df.columns[1]
                         df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                        df = split_gaap_non_gaap(df)
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
                         results.append(df)
