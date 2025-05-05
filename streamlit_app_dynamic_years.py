@@ -57,8 +57,63 @@ def parse_value_range(text: str):
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
 st.title("📄 SEC 8-K Guidance Extractor")
 
+# Company Fiscal Year Configuration
+FISCAL_YEAR_CONFIG = {
+    'TEAM': {
+        'fiscal_year_end_month': 6,  # June
+        'fiscal_year_end_day': 30,
+        'quarters': {
+            1: {'start_month': 7, 'end_month': 9},    # Q1: Jul-Sep
+            2: {'start_month': 10, 'end_month': 12},  # Q2: Oct-Dec
+            3: {'start_month': 1, 'end_month': 3},    # Q3: Jan-Mar
+            4: {'start_month': 4, 'end_month': 6}     # Q4: Apr-Jun
+        },
+        'earnings_report_offset': {
+            1: {'months': 1, 'days': 15},  # Q1 reported ~Oct 15 - Nov 15
+            2: {'months': 1, 'days': 15},  # Q2 reported ~Jan 15 - Feb 15
+            3: {'months': 1, 'days': 15},  # Q3 reported ~Apr 15 - May 15
+            4: {'months': 1, 'days': 15}   # Q4 reported ~Jul 15 - Aug 15
+        }
+    },
+    'FRSH': {
+        'fiscal_year_end_month': 12,  # December
+        'fiscal_year_end_day': 31,
+        'quarters': {
+            1: {'start_month': 1, 'end_month': 3},    # Q1: Jan-Mar
+            2: {'start_month': 4, 'end_month': 6},    # Q2: Apr-Jun
+            3: {'start_month': 7, 'end_month': 9},    # Q3: Jul-Sep
+            4: {'start_month': 10, 'end_month': 12}   # Q4: Oct-Dec
+        },
+        'earnings_report_offset': {
+            1: {'months': 1, 'days': 0},  # Q1 reported ~Apr 15 - May 15
+            2: {'months': 1, 'days': 0},  # Q2 reported ~Jul 15 - Aug 15
+            3: {'months': 1, 'days': 0},  # Q3 reported ~Oct 15 - Nov 15
+            4: {'months': 1, 'days': 15}  # Q4 reported ~Jan 15 - Feb 15
+        }
+    }
+    # Add more companies as needed
+}
+
+# Default fiscal configuration for companies not in our database
+DEFAULT_FISCAL_CONFIG = {
+    'fiscal_year_end_month': 12,  # December
+    'fiscal_year_end_day': 31,
+    'quarters': {
+        1: {'start_month': 1, 'end_month': 3},     # Q1: Jan-Mar
+        2: {'start_month': 4, 'end_month': 6},     # Q2: Apr-Jun
+        3: {'start_month': 7, 'end_month': 9},     # Q3: Jul-Sep
+        4: {'start_month': 10, 'end_month': 12}    # Q4: Oct-Dec
+    },
+    'earnings_report_offset': {
+        1: {'months': 1, 'days': 0},  # Q1 reported ~Apr 15 - May 15
+        2: {'months': 1, 'days': 0},  # Q2 reported ~Jul 15 - Aug 15
+        3: {'months': 1, 'days': 0},  # Q3 reported ~Oct 15 - Nov 15
+        4: {'months': 1, 'days': 15}  # Q4 reported ~Jan 15 - Feb 15
+    }
+}
+
 # Inputs
-ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
+ticker = st.text_input("Enter Stock Ticker (e.g., TEAM, FRSH)", "TEAM").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
 
 # Both filter options displayed at the same time
@@ -76,63 +131,76 @@ def lookup_cik(ticker):
             return str(entry["cik_str"]).zfill(10)
 
 
-def get_team_accessions_for_quarter(cik, quarter_num, year_num):
+def get_fiscal_dates(ticker, quarter_num, year_num):
     """
-    Special function specifically for finding TEAM filings for a given fiscal quarter
+    Calculate the appropriate date range for a company's fiscal quarter
+    based on its fiscal year configuration.
     """
-    headers = {'User-Agent': 'Your Name Contact@domain.com'}
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    resp = requests.get(url, headers=headers)
-    data = resp.json()
-    filings = data["filings"]["recent"]
-    accessions = []
+    # Get fiscal year config for the company or use default
+    config = FISCAL_YEAR_CONFIG.get(ticker, DEFAULT_FISCAL_CONFIG)
     
-    # For TEAM's Q2 FY25 specifically, we know it was reported on January 30, 2025
-    if quarter_num == 2 and year_num == 2025:
-        target_date = "2025-01-30"
-        st.write(f"Looking for TEAM Q2 FY25 earnings report (reported on {target_date})")
-        
-        # Look for filings on or around January 30, 2025
-        start_date = datetime(2025, 1, 15)  # Buffer before
-        end_date = datetime(2025, 2, 15)    # Buffer after
-        
-        for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
-            if form == "8-K":
-                date = datetime.strptime(date_str, "%Y-%m-%d")
-                if start_date <= date <= end_date:
-                    accessions.append((accession, date_str))
-                    st.write(f"Found filing from {date_str}: {accession}")
+    # Parse quarter configuration
+    quarter_info = config['quarters'].get(quarter_num, {})
+    report_offset = config['earnings_report_offset'].get(quarter_num, {'months': 1, 'days': 0})
     
-    # For other TEAM quarters, use the general pattern
-    elif quarter_num == 1:  # Q1 typically reported in October-November
-        start_date = datetime(year_num - 1, 10, 1)
-        end_date = datetime(year_num - 1, 11, 30)
-    elif quarter_num == 2:  # Q2 typically reported in January-February
-        start_date = datetime(year_num, 1, 1)
-        end_date = datetime(year_num, 2, 28)
-    elif quarter_num == 3:  # Q3 typically reported in April-May
-        start_date = datetime(year_num, 4, 1)
-        end_date = datetime(year_num, 5, 31)
-    else:  # Q4 typically reported in July-August
-        start_date = datetime(year_num, 7, 1)
-        end_date = datetime(year_num, 8, 31)
+    # Determine if we need to adjust the calendar year based on fiscal year
+    fiscal_year_end_month = config['fiscal_year_end_month']
     
-    # Add buffer periods
-    start_date = start_date - timedelta(days=15)
-    end_date = end_date + timedelta(days=15)
+    # Fiscal year calculation
+    # If the company's fiscal year ends in December, fiscal year = calendar year
+    # Otherwise, we need to determine if the quarter falls in the previous or next calendar year
+    if fiscal_year_end_month == 12:
+        # Calendar fiscal year (like FRSH)
+        calendar_year = year_num
+    else:
+        # Non-calendar fiscal year (like TEAM)
+        # For quarters that start after the fiscal year end month, they belong to the next fiscal year
+        if quarter_info['start_month'] <= fiscal_year_end_month:
+            # This quarter is in the same calendar year as the fiscal year number
+            calendar_year = year_num
+        else:
+            # This quarter is in the previous calendar year 
+            calendar_year = year_num - 1
     
-    st.write(f"Looking for TEAM Q{quarter_num} FY{year_num} earnings filings")
-    st.write(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+    # Calculate the quarter's actual start and end dates
+    start_month = quarter_info['start_month']
+    end_month = quarter_info['end_month']
     
-    # Find filings in this date range
-    for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
-        if form == "8-K":
-            date = datetime.strptime(date_str, "%Y-%m-%d")
-            if start_date <= date <= end_date:
-                accessions.append((accession, date_str))
-                st.write(f"Found filing from {date_str}: {accession}")
+    # Determine the exact dates for the quarter
+    start_date = datetime(calendar_year, start_month, 1)
     
-    return accessions
+    # Calculate end date (last day of the end month)
+    if end_month == 2:
+        # Handle February and leap years
+        if (calendar_year % 4 == 0 and calendar_year % 100 != 0) or (calendar_year % 400 == 0):
+            end_day = 29  # Leap year
+        else:
+            end_day = 28
+    elif end_month in [4, 6, 9, 11]:
+        end_day = 30
+    else:
+        end_day = 31
+    
+    end_date = datetime(calendar_year, end_month, end_day)
+    
+    # Calculate expected earnings report dates (typically a few weeks after quarter end)
+    report_start = end_date + timedelta(days=15)
+    report_end = report_start + timedelta(days=45)  # Typical reporting window
+    
+    # Output info about the dates
+    quarter_period = f"Q{quarter_num} FY{year_num}"
+    period_description = f"{start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}"
+    expected_report = f"~{report_start.strftime('%B %d, %Y')} to {report_end.strftime('%B %d, %Y')}"
+    
+    return {
+        'quarter_period': quarter_period,
+        'start_date': start_date,
+        'end_date': end_date,
+        'report_start': report_start,
+        'report_end': report_end,
+        'period_description': period_description,
+        'expected_report': expected_report
+    }
 
 
 def get_accessions(cik, years_back=None, specific_quarter=None):
@@ -156,7 +224,7 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
                 if date >= cutoff:
                     accessions.append((accession, date_str))
     
-    elif specific_quarter and ticker == 'TEAM':
+    elif specific_quarter:
         # Parse quarter and year from input
         match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:FY)?(\d{2}|\d{4})', specific_quarter.upper())
         if match:
@@ -170,54 +238,19 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
             quarter_num = int(quarter)
             year_num = int(year)
             
-            # Use special TEAM-specific function
-            return get_team_accessions_for_quarter(cik, quarter_num, year_num)
-    
-    elif specific_quarter:
-        # For non-TEAM tickers, use general calendar quarters
-        match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:FY)?(\d{2}|\d{4})', specific_quarter.upper())
-        if match:
-            quarter = match.group(1) or match.group(2)
-            year = match.group(3)
+            # Get fiscal dates based on company's fiscal calendar
+            fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num)
             
-            # Convert 2-digit year to 4-digit year
-            if len(year) == 2:
-                year = '20' + year
-                
-            quarter_num = int(quarter)
-            year_num = int(year)
+            # Display fiscal quarter information
+            st.write(f"Looking for {ticker} {fiscal_info['quarter_period']} filings")
+            st.write(f"Fiscal quarter period: {fiscal_info['period_description']}")
+            st.write(f"Expected earnings reporting window: {fiscal_info['expected_report']}")
             
-            # Default calendar quarters
-            if quarter_num == 1:
-                start_month, end_month = 1, 3  # Jan-Mar
-            elif quarter_num == 2:
-                start_month, end_month = 4, 6  # Apr-Jun
-            elif quarter_num == 3:
-                start_month, end_month = 7, 9  # Jul-Sep
-            elif quarter_num == 4:
-                start_month, end_month = 10, 12  # Oct-Dec
+            # We want to find filings around the expected earnings report date
+            start_date = fiscal_info['report_start'] - timedelta(days=15)  # Include potential early reports
+            end_date = fiscal_info['report_end'] + timedelta(days=15)  # Include potential late reports
             
-            start_date = datetime(year_num, start_month, 1)
-            
-            # Set the correct end day based on the month
-            if end_month == 2:
-                # Handle February and leap years
-                if (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0):
-                    end_day = 29  # Leap year
-                else:
-                    end_day = 28
-            elif end_month in [4, 6, 9, 11]:
-                end_day = 30
-            else:
-                end_day = 31
-                
-            end_date = datetime(year_num, end_month, end_day)
-            
-            # Add a buffer period after quarter end for earnings releases
-            end_date = end_date + timedelta(days=60)
-            
-            st.write(f"Looking for Calendar Quarter {quarter_num} of {year_num}")
-            st.write(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+            st.write(f"Searching for filings between: {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}")
             
             # Find filings in this date range
             for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
@@ -246,8 +279,10 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
         if available_dates:
             available_dates.sort(reverse=True)  # Show most recent first
             st.write("All available 8-K filing dates:")
-            for date in available_dates:
+            for date in available_dates[:15]:  # Show only the first 15 to avoid cluttering
                 st.write(f"- {date}")
+            if len(available_dates) > 15:
+                st.write(f"... and {len(available_dates) - 15} more")
     
     return accessions
 
