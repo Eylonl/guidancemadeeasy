@@ -120,9 +120,15 @@ Return a structured list containing:
 - value or range (e.g. $1.5B–$1.6B or $2.05)
 - applicable period (e.g. Q3 FY24, Full Year 2025)
 
-VERY IMPORTANT: For any percentage values, always include the % symbol in your output:
-- If the guidance mentions "operating margin of 5 to 7 percent", output it as "5% to 7%" or "5%-7%"
-- If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
+VERY IMPORTANT FORMATTING INSTRUCTIONS:
+1. For any percentage values, always include the % symbol in your output:
+   - If the guidance mentions "operating margin of 5 to 7 percent", output it as "5% to 7%" or "5%-7%"
+   - If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
+
+2. Be consistent with percentage formatting:
+   - If a value represents a percentage (e.g., margin, growth rate), always include the % symbol
+   - This is critical because your output will be parsed into "Low", "High", and "Average" columns
+   - The parser will only add % symbols to these columns if they appear in your original Value output
 
 Respond in table format without commentary.\n\n{text}"""
     try:
