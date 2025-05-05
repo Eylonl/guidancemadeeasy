@@ -146,21 +146,29 @@ def get_fiscal_dates(ticker, quarter_num, year_num):
     # Determine if we need to adjust the calendar year based on fiscal year
     fiscal_year_end_month = config['fiscal_year_end_month']
     
-    # Fiscal year calculation
-    # If the company's fiscal year ends in December, fiscal year = calendar year
-    # Otherwise, we need to determine if the quarter falls in the previous or next calendar year
+    # For companies with calendar fiscal year (ending in December)
     if fiscal_year_end_month == 12:
-        # Calendar fiscal year (like FRSH)
+        # Q1: Jan-Mar of fiscal year
+        # Q2: Apr-Jun of fiscal year
+        # Q3: Jul-Sep of fiscal year
+        # Q4: Oct-Dec of fiscal year
         calendar_year = year_num
     else:
-        # Non-calendar fiscal year (like TEAM)
-        # For quarters that start after the fiscal year end month, they belong to the next fiscal year
-        if quarter_info['start_month'] <= fiscal_year_end_month:
-            # This quarter is in the same calendar year as the fiscal year number
-            calendar_year = year_num
-        else:
-            # This quarter is in the previous calendar year 
+        # For companies with non-calendar fiscal year (like TEAM ending in June)
+        # Q1: Jul-Sep of previous calendar year
+        # Q2: Oct-Dec of previous calendar year
+        # Q3: Jan-Mar of current calendar year
+        # Q4: Apr-Jun of current calendar year
+        
+        # If the quarter starts after the fiscal year end, it belongs to the next fiscal year
+        if quarter_info['start_month'] > fiscal_year_end_month:
+            # This is first part of fiscal year (e.g., Q1, Q2 for TEAM)
+            # For FY24, Q1 would be in calendar year 2023
             calendar_year = year_num - 1
+        else:
+            # This is latter part of fiscal year (e.g., Q3, Q4 for TEAM)
+            # For FY24, Q4 would be in calendar year 2024
+            calendar_year = year_num
     
     # Calculate the quarter's actual start and end dates
     start_month = quarter_info['start_month']
@@ -229,8 +237,9 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
                     accessions.append((accession, date_str))
     
     elif specific_quarter:
-        # Parse quarter and year from input
-        match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:FY)?(\d{2}|\d{4})', specific_quarter.upper())
+        # Parse quarter and year from input - handle various formats
+        # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
+        match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:\s*FY\s*|\s*)?(\d{2}|\d{4})', specific_quarter.upper())
         if match:
             quarter = match.group(1) or match.group(2)
             year = match.group(3)
