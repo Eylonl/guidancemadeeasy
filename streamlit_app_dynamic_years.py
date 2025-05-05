@@ -176,7 +176,13 @@ if st.button("🔍 Extract Guidance"):
                 accessions = get_most_recent_accession(cik)
 
 
+            
             links = get_ex99_1_links(cik, accessions)
+
+            if fiscal_year and quarter:
+                target = f"q{quarter[-1].lower()}fy{fiscal_year[-2:]}"
+                links = [(d, a, u) for d, a, u in links if target in u.lower()]
+
             results = []
 
             for date_str, acc, url in links:
