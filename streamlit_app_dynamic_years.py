@@ -30,9 +30,6 @@ def extract_number(token: str):
         return None
 
 def parse_value_range(text: str):
-
-def is_percent(text):
-    return isinstance(text, str) and "%" in text
     if not isinstance(text, str):
         return (None, None, None)
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
@@ -164,12 +161,7 @@ if st.button("🔍 Extract Guidance"):
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                         # parse low, high, and average from Value column
                         value_col = df.columns[1]
-parsed_values = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-parsed_values.columns = ['Low', 'High', 'Average']
-is_percent_col = df[value_col].apply(is_percent)
-for col in ['Low', 'High', 'Average']:
-    parsed_values[col] = parsed_values[col].where(~is_percent_col, parsed_values[col] / 100)
-df = pd.concat([df, parsed_values], axis=1)
+                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
                         results.append(df)
@@ -183,14 +175,7 @@ df = pd.concat([df, parsed_values], axis=1)
                 combined = pd.concat(results, ignore_index=True)
                 import io
                 excel_buffer = io.BytesIO()
-with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-    combined.to_excel(writer, index=False, sheet_name='Guidance')
-    workbook = writer.book
-    worksheet = writer.sheets['Guidance']
-    percent_format = workbook.add_format({'num_format': '0.00%'})
-    for col_idx, col_name in enumerate(combined.columns):
-        if col_name in ['Low', 'High', 'Average']:
-            worksheet.set_column(col_idx, col_idx, None, percent_format)
+                combined.to_excel(excel_buffer, index=False)
                 st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.warning("No guidance data extracted.")
