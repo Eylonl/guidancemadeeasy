@@ -192,6 +192,7 @@ if st.button("🔍 Extract Guidance"):
         except:
             st.error("Invalid year input. Must be a number or quarter (e.g., 1Q25).")
             accessions = []
+            else:
                 accessions = get_most_recent_accession(cik)
 
             links = get_ex99_1_links(cik, accessions)
