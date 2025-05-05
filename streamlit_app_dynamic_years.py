@@ -6,6 +6,7 @@ from openai import OpenAI
 import pandas as pd
 import os
 import re
+import io
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
@@ -653,10 +654,15 @@ if st.button("🔍 Extract Guidance"):
                     use_container_width=True
                 )
                 
-                # Add download button
-                import io
+                # Add download button for Excel file
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
-                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                excel_buffer.seek(0)
+                st.download_button(
+                    label="📥 Download Excel",
+                    data=excel_buffer,
+                    file_name=f"{ticker}_guidance_output.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             else:
                 st.warning("No guidance data extracted.")
