@@ -61,15 +61,9 @@ st.title("📄 SEC 8-K Guidance Extractor")
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
 
-# Add filter selection
-filter_type = st.radio("Filter by:", ["Years Back", "Specific Quarter"])
-
-if filter_type == "Years Back":
-    year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
-    quarter_input = None
-else:  # Specific Quarter
-    quarter_input = st.text_input("Enter specific quarter (e.g., 3Q25, Q4FY24)", "")
-    year_input = None
+# Both filter options displayed at the same time
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
 
 
 @st.cache_data(show_spinner=False)
@@ -230,24 +224,21 @@ if st.button("🔍 Extract Guidance"):
             client = OpenAI(api_key=api_key)
             
             # Handle different filtering options
-            if filter_type == "Years Back":
-                if year_input.strip():
-                    try:
-                        years_back = int(year_input.strip())
-                        accessions = get_accessions(cik, years_back=years_back)
-                    except:
-                        st.error("Invalid year input. Must be a number.")
-                        accessions = []
-                else:
-                    accessions = get_most_recent_accession(cik)
-            else:  # Specific Quarter
-                if quarter_input.strip():
-                    accessions = get_accessions(cik, specific_quarter=quarter_input.strip())
-                    if not accessions:
-                        st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 3Q25, Q4FY24).")
-                else:
-                    st.error("Please enter a specific quarter (e.g., 3Q25, Q4FY24).")
+            if quarter_input.strip():
+                # Quarter input takes precedence if both are filled
+                accessions = get_accessions(cik, specific_quarter=quarter_input.strip())
+                if not accessions:
+                    st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
+            elif year_input.strip():
+                try:
+                    years_back = int(year_input.strip())
+                    accessions = get_accessions(cik, years_back=years_back)
+                except:
+                    st.error("Invalid year input. Must be a number.")
                     accessions = []
+            else:
+                # Default to most recent if neither input is provided
+                accessions = get_most_recent_accession(cik)
 
             links = get_ex99_1_links(cik, accessions)
             results = []
