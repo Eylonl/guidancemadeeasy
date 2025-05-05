@@ -558,21 +558,55 @@ if st.button("🔍 Extract Guidance"):
                     # Extract text while preserving structure
                     text = soup.get_text(" ", strip=True)
                     
-                    # NEW: Extract just the guidance paragraphs instead of sending the entire document
-                    guidance_text, found_guidance = find_guidance_paragraphs(text)
+                    # Find paragraphs containing guidance patterns
+                    guidance_patterns = [
+                        r'(?i)outlook',
+                        r'(?i)guidance',
+                        r'(?i)financial outlook',
+                        r'(?i)business outlook',
+                        r'(?i)forward[\s-]*looking',
+                        r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
+                        r'(?i)(?:we|company) expect(?:s)?',
+                        r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
+                        r'(?i)to be (?:in the range of|approximately)',
+                        r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
+                        r'(?i)growth of (?:approximately|about)',
+                        r'(?i)for (?:fiscal|the fiscal)',
+                        r'(?i)next quarter',
+                        r'(?i)full year',
+                        r'(?i)current quarter',
+                        r'(?i)future quarter',
+                        r'(?i)Q[1-4]'
+                    ]
                     
-                    # Check if we found any guidance-related text
-                    if guidance_text:
-                        if found_guidance:
-                            st.success(f"✅ Found potential guidance information in the document.")
-                        else:
-                            st.info(f"ℹ️ No clear guidance sections found. Using a sample of the document.")
+                    # Split text into paragraphs
+                    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                    guidance_paragraphs = []
+                    
+                    for para in paragraphs:
+                        if any(re.search(pattern, para) for pattern in guidance_patterns):
+                            # Check if it's likely a forward-looking statement (not a disclaimer)
+                            if not (re.search(r'(?i)safe harbor', para) or 
+                                   (re.search(r'(?i)forward-looking statements', para) and 
+                                    re.search(r'(?i)risks', para))):
+                                guidance_paragraphs.append(para)
+                    
+                    # Check if we found any guidance paragraphs
+                    if guidance_paragraphs:
+                        st.success(f"✅ Found potential guidance information in {len(guidance_paragraphs)} paragraphs.")
                         
-                        # Extract guidance from just the guidance paragraphs
+                        # Create a highlighted version of the text with guidance sections
+                        guidance_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        guidance_text += "POTENTIAL GUIDANCE SECTIONS:\n\n" + "\n\n".join(guidance_paragraphs)
+                        
+                        # Extract guidance from the highlighted text
                         table = extract_guidance(guidance_text, ticker, client)
                     else:
-                        st.warning(f"⚠️ Could not identify any guidance-related text in the document.")
-                        continue
+                        st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
+                        # Use a sample of the document to reduce token usage
+                        sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
+                        table = extract_guidance(sample_text, ticker, client)
                     
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
