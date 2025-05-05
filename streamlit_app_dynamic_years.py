@@ -38,7 +38,6 @@ def format_percent(val):
     return val
 
 def parse_value_range(text: str):
-    is_percent = "%" in text or "percent" in text.lower()
     if not isinstance(text, str):
         return (None, None, None)
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
@@ -62,7 +61,10 @@ st.title("📄 SEC 8-K Guidance Extractor")
 # Inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+
+quarter = st.selectbox("Select Quarter", ["Q1", "Q2", "Q3", "Q4"])
+fiscal_year = st.text_input("Enter Fiscal Year (e.g., 2024)", "")
+
 
 
 @st.cache_data(show_spinner=False)
@@ -166,16 +168,13 @@ if st.button("🔍 Extract Guidance"):
             st.error("CIK not found for ticker.")
         else:
             client = OpenAI(api_key=api_key)
-            if year_input.strip():
-                years_back = int(year_input.strip())
-                try:
-                    years_back = int(year_input)
-                    accessions = get_accessions(cik, years_back)
-                except:
-                    st.error("Invalid year input. Must be a number.")
-                    accessions = []
+            
+            if fiscal_year and quarter:
+                accessions = get_accessions(cik, 10)
+                accessions = [(acc, date) for acc, date in accessions if f"q{quarter[-1].lower()}fy{fiscal_year[-2:]}" in acc.lower()]
             else:
                 accessions = get_most_recent_accession(cik)
+
 
             links = get_ex99_1_links(cik, accessions)
             results = []
