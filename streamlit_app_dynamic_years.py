@@ -166,7 +166,7 @@ if st.button("🔍 Extract Guidance"):
         else:
             client = OpenAI(api_key=api_key)
             if year_input.strip():
-                if re.match(r'\dQ\d{2,4}', year_input.upper()):  # Example: 1Q25, 3Q2024
+                if re.match(r'\dQ\d{2,4}', year_input.upper()):
                     period = year_input.upper()
                     all_recent = get_accessions(cik, 10)
                     accessions = []
@@ -175,26 +175,15 @@ if st.button("🔍 Extract Guidance"):
                             accessions.append((acc, date_str))
                     if not accessions:
                         st.warning(f"No filings found for period {period}")
+                else:
                     try:
                         years_back = int(year_input)
                         accessions = get_accessions(cik, years_back)
                     except:
                         st.error("Invalid year input. Must be a number or quarter (e.g., 1Q25).")
                         accessions = []
-        for acc, date_str in all_recent:
-            if period in acc or period in date_str.replace("-", ""):
-                accessions.append((acc, date_str))
-        if not accessions:
-            st.warning(f"No filings found for period {period}")
-        try:
-            years_back = int(year_input)
-            accessions = get_accessions(cik, years_back)
-        except:
-            st.error("Invalid year input. Must be a number or quarter (e.g., 1Q25).")
-            accessions = []
             else:
                 accessions = get_most_recent_accession(cik)
-
             links = get_ex99_1_links(cik, accessions)
             results = []
 
