@@ -344,7 +344,6 @@ def correct_value_signs(df):
     
     return df
 
-
 def check_range_consistency(df):
     """
     Improved function to check for and fix inconsistencies in range parsing.
@@ -657,6 +656,18 @@ st.title("📄 SEC 8-K Guidance Extractor")
 # Inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+# Add model selection dropdown
+openai_models = {
+    "GPT-4 Turbo": "gpt-4-turbo-preview",
+    "GPT-4": "gpt-4",
+    "GPT-3.5 Turbo": "gpt-3.5-turbo"
+}
+selected_model = st.selectbox(
+    "Select OpenAI Model",
+    list(openai_models.keys()),
+    index=0  # Default to first option (GPT-4 Turbo)
+)
 
 # Both filter options displayed at the same time
 year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
@@ -1016,10 +1027,10 @@ def find_guidance_paragraphs(text):
     return formatted_paragraphs, found_paragraphs
 
 
-def extract_guidance(text, ticker, client):
+def extract_guidance(text, ticker, client, model_name):
     """
     Enhanced function to extract guidance from SEC filings with improved handling of 
-    parenthetical negative values and other formats.
+    parenthetical negative values and other formats. Now accepts model_name as a parameter.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -1089,7 +1100,7 @@ Respond in table format without commentary.\n\n{text}"""
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
         )
@@ -1130,6 +1141,10 @@ if st.button("🔍 Extract Guidance"):
         if not cik:
             st.error("CIK not found for ticker.")
         else:
+            # Get the selected model ID from the dropdown
+            model_id = openai_models[selected_model]
+            
+            # Initialize the OpenAI client
             client = OpenAI(api_key=api_key)
             
             # Store the ticker for later use
@@ -1171,15 +1186,17 @@ if st.button("🔍 Extract Guidance"):
                     if found_guidance:
                         st.success(f"✅ Found potential guidance information.")
                         
-                        # Extract guidance from the highlighted text
-                        table = extract_guidance(guidance_paragraphs, ticker, client)
+                        # Extract guidance from the highlighted text using the selected model
+                        st.info(f"Using OpenAI model: {selected_model}")
+                        table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
                     else:
                         st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
                         # Use a sample of the document to reduce token usage
                         sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
                         paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
                         sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
-                        table = extract_guidance(sample_text, ticker, client)
+                        st.info(f"Using OpenAI model: {selected_model}")
+                        table = extract_guidance(sample_text, ticker, client, model_id)
                     
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
@@ -1248,6 +1265,7 @@ if st.button("🔍 Extract Guidance"):
                             # Add metadata columns
                             df["FilingDate"] = date_str
                             df["8K_Link"] = url
+                            df["Model_Used"] = selected_model  # Add the model used to the output
                             results.append(df)
                             st.success("✅ Guidance extracted from this 8-K.")
                         else:
@@ -1274,7 +1292,7 @@ if st.button("🔍 Extract Guidance"):
                 st.subheader("🔍 Preview of Extracted Guidance")
                 
                 # Select the most relevant columns for display
-                display_cols = ["Metric", "Value", "Period", "Low", "High", "Average", "FilingDate"]
+                display_cols = ["Metric", "Value", "Period", "Low", "High", "Average", "FilingDate", "Model_Used"]
                 display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
                 
                 # Apply custom formatting when displaying
@@ -1299,3 +1317,4 @@ if st.button("🔍 Extract Guidance"):
                 st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.warning("No guidance data extracted.")
+                    
