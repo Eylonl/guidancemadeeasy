@@ -37,32 +37,34 @@ def format_percent(val):
         return f"{val:.1f}%"
     return val
 
-
 def parse_value_range(text: str):
     if not isinstance(text, str):
         return (None, None, None)
-
-    is_percent = "%" in text or re.search(r'percent', text, re.I)
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
-        return ("0.0%%", "0.0%%", "0.0%%") if is_percent else (0.0, 0.0, 0.0)
-
+        return (0.0, 0.0, 0.0)
     rng = re.search(fr'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
     if rng:
         lo = extract_number(rng.group(1))
         hi = extract_number(rng.group(2))
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-    else:
-        single = re.search(number_token, text, re.I)
-        if single:
-            val = extract_number(single.group(0))
-            return (f"{val:.1f}%%", f"{val:.1f}%%", f"{val:.1f}%%") if is_percent else (val, val, val)
-        return (None, None, None)
-
-    if is_percent:
-        return (f"{lo:.1f}%%", f"{hi:.1f}%%", f"{avg:.1f}%%")
-    else:
+        avg = (lo+hi)/2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
+    single = re.search(number_token, text, re.I)
+    if single:
+        v = extract_number(single.group(0))
+        return (v, v, v)
+    return (None, None, None)
 
+
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
+
+# Inputs
+ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+
+
+@st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
     res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
