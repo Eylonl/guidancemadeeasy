@@ -136,27 +136,6 @@ Respond in table format without commentary.\n\n{text}"""
                 st.warning("⚠️ Skipped, no guidance found in filing.")
 
 
-# Function to ensure percentages in columns D, E, F if they're in column B
-def ensure_percentage_consistency(df):
-    if 'Value' not in df.columns:
-        return df
-    
-    for idx, row in df.iterrows():
-        value = str(row['Value'])
-        # Check if the Value column contains a percentage
-        if '%' in value:
-            # Make sure Low, High, and Average have percentage symbols
-            for col in ['Low', 'High', 'Average']:
-                if col in df.columns and df.at[idx, col] is not None:
-                    # If the value is numeric and doesn't already have %, add it
-                    try:
-                        val = float(str(df.at[idx, col]).rstrip('%'))
-                        df.at[idx, col] = f"{val:.1f}%"
-                    except:
-                        # If not convertible to float, leave as is
-                        pass
-    return df
-
 
 def split_gaap_non_gaap(df):
     if 'Value' not in df.columns or 'Metric' not in df.columns:
@@ -216,15 +195,23 @@ if st.button("🔍 Extract Guidance"):
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                        # parse low, high, and average from Value column
+                        
+                        # Store which rows have percentages in the Value column
+                        has_percent = df[df.columns[1]].apply(lambda x: '%' in str(x))
+                        
+                        # Parse low, high, and average from Value column
                         value_col = df.columns[1]
                         df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
                         
                         # Apply GAAP/non-GAAP split
                         df = split_gaap_non_gaap(df)
                         
-                        # Ensure percentage consistency between Value and Low/High/Average columns
-                        df = ensure_percentage_consistency(df)
+                        # Add % symbol to Low, High, Average columns if % was in the Value column
+                        for i, has_pct in enumerate(has_percent):
+                            if has_pct and i < len(df):
+                                for col in ['Low', 'High', 'Average']:
+                                    if df.at[i, col] is not None and isinstance(df.at[i, col], (int, float)):
+                                        df.at[i, col] = f"{df.at[i, col]:.1f}%"
                         
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
