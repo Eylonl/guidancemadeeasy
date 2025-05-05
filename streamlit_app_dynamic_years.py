@@ -2,10 +2,10 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from openai import OpenAI
 import pandas as pd
 import os
 import re
+import io
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
@@ -59,7 +59,6 @@ st.title("📄 SEC 8-K Guidance Extractor")
 
 # Inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
-api_key = st.text_input("Enter OpenAI API Key", type="password")
 
 # Both filter options displayed at the same time
 year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
@@ -337,7 +336,11 @@ def get_ex99_1_links(cik, accessions):
     return links
 
 
-def extract_guidance(text, ticker, client):
+def generate_guidance_prompt(text, ticker):
+    """
+    Generates the prompt that would be sent to OpenAI's API.
+    Returns the prompt text.
+    """
     prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker}. 
 
 Return a structured list containing:
@@ -353,16 +356,7 @@ VERY IMPORTANT:
 - Be sure to capture year-over-year growth metrics as well as absolute values
 
 Respond in table format without commentary.\n\n{text}"""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
-        return None
+    return prompt
 
 
 def split_gaap_non_gaap(df):
@@ -389,42 +383,41 @@ def split_gaap_non_gaap(df):
 
 
 if st.button("🔍 Extract Guidance"):
-    if not api_key:
-        st.error("Please enter your OpenAI API key.")
+    cik = lookup_cik(ticker)
+    if not cik:
+        st.error("CIK not found for ticker.")
     else:
-        cik = lookup_cik(ticker)
-        if not cik:
-            st.error("CIK not found for ticker.")
+        # Store the ticker for later use
+        st.session_state['ticker'] = ticker
+        
+        # Handle different filtering options
+        if quarter_input.strip():
+            # Quarter input takes precedence
+            accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
+            if not accessions:
+                st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
+        elif year_input.strip():
+            try:
+                years_back = int(year_input.strip())
+                accessions = get_accessions(cik, ticker, years_back=years_back)
+            except:
+                st.error("Invalid year input. Must be a number.")
+                accessions = []
         else:
-            client = OpenAI(api_key=api_key)
-            
-            # Store the ticker for later use
-            st.session_state['ticker'] = ticker
-            
-            # Handle different filtering options
-            if quarter_input.strip():
-                # Quarter input takes precedence
-                accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
-                if not accessions:
-                    st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
-            elif year_input.strip():
-                try:
-                    years_back = int(year_input.strip())
-                    accessions = get_accessions(cik, ticker, years_back=years_back)
-                except:
-                    st.error("Invalid year input. Must be a number.")
-                    accessions = []
-            else:
-                # Default to most recent if neither input is provided
-                accessions = get_accessions(cik, ticker)
+            # Default to most recent if neither input is provided
+            accessions = get_accessions(cik, ticker)
 
-            links = get_ex99_1_links(cik, accessions)
-            results = []
-
-            for date_str, acc, url in links:
-                st.write(f"📄 Processing {url}")
+        links = get_ex99_1_links(cik, accessions)
+        
+        # For each link, create a download button for the OpenAI prompt
+        for i, (date_str, acc, url) in enumerate(links):
+            st.write(f"📄 Filing from {date_str}: {url}")
+            
+            # Create an expander for each filing to avoid cluttering the UI
+            with st.expander(f"View Details for Filing {i+1}"):
                 try:
-                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
+                    headers = {"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}
+                    html = requests.get(url, headers=headers).text
                     text = BeautifulSoup(html, "html.parser").get_text()
                     
                     # Search for guidance-related sections in the text
@@ -457,57 +450,32 @@ if st.button("🔍 Extract Guidance"):
                     # Combine the most promising sections for extraction
                     combined_text = "\n\n".join(outlook_sections[:3])  # Use up to 3 most relevant sections
                     
-                    # Now extract guidance from the identified sections
-                    table = extract_guidance(combined_text, ticker, client)
+                    # Generate the prompt
+                    prompt = generate_guidance_prompt(combined_text, ticker)
                     
-                    if table and "|" in table:
-                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                        if len(rows) > 1:  # Check if we have header and at least one row of data
-                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                            
-                            # Store which rows have percentages in the Value column
-                            percentage_rows = []
-                            for idx, row in df.iterrows():
-                                if '%' in str(row[df.columns[1]]):
-                                    percentage_rows.append(idx)
-                            
-                            # Parse low, high, and average from Value column
-                            value_col = df.columns[1]
-                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                            
-                            # Apply GAAP/non-GAAP split
-                            df = split_gaap_non_gaap(df)
-                            
-                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                            for idx in df.index:
-                                # Check if the original row had a percentage
-                                if idx in percentage_rows:
-                                    # Add % to Low, High, Average columns
-                                    for col in ['Low', 'High', 'Average']:
-                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                            df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                            
-                            df["FilingDate"] = date_str
-                            df["8K_Link"] = url
-                            results.append(df)
-                            st.success("✅ Guidance extracted from this 8-K.")
-                        else:
-                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
-                    else:
-                        st.warning(f"⚠️ No guidance table found in {url}")
+                    # Create download button for the prompt
+                    st.download_button(
+                        label=f"📥 Download OpenAI Prompt for {date_str}",
+                        data=prompt,
+                        file_name=f"{ticker}_guidance_prompt_{date_str}.txt",
+                        mime="text/plain"
+                    )
+                    
+                    # Show a preview of the prompt
+                    with st.expander("Preview Prompt"):
+                        st.text_area("OpenAI Prompt", prompt, height=400)
                         
-                        # Show a sample of the text to help debug
+                    st.success(f"✅ Prompt generated for {date_str} filing. Click the download button above to save it.")
+                    
+                    # Show a sample of the text to help debug
+                    with st.expander("Preview Document Text"):
                         sample_length = min(500, len(text))
                         st.write(f"Sample of document text (first {sample_length} characters):")
                         st.text(text[:sample_length] + "...")
+                    
                 except Exception as e:
                     st.warning(f"Could not process: {url}. Error: {str(e)}")
-
-            if results:
-                combined = pd.concat(results, ignore_index=True)
-                import io
-                excel_buffer = io.BytesIO()
-                combined.to_excel(excel_buffer, index=False)
-                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            else:
-                st.warning("No guidance data extracted.")
+        
+        # If no links were found
+        if not links:
+            st.warning("No filings found to generate prompts from.")
