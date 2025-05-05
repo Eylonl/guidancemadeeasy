@@ -523,6 +523,53 @@ def split_gaap_non_gaap(df):
     return pd.DataFrame(rows)
 
 
+def process_guidance_table(df):
+    """
+    Process the guidance table while preserving the original Value format.
+    Parse for calculations but keep original value display.
+    """
+    if 'Value' not in df.columns or 'Metric' not in df.columns:
+        return df  # Avoid crash if column names are missing
+
+    # Store the original Value column before any processing
+    df['OriginalValue'] = df['Value'].copy()
+    
+    # First apply GAAP/non-GAAP split (this creates new rows)
+    df = split_gaap_non_gaap(df)
+    
+    # Make sure all rows have the OriginalValue column (rows created in split_gaap_non_gaap won't have it)
+    if 'OriginalValue' in df.columns:
+        df.loc[df['OriginalValue'].isna(), 'OriginalValue'] = df.loc[df['OriginalValue'].isna(), 'Value']
+    else:
+        df['OriginalValue'] = df['Value'].copy()
+    
+    # Store which rows have percentages in the Value column
+    percentage_rows = []
+    for idx, row in df.iterrows():
+        if '%' in str(row['Value']):
+            percentage_rows.append(idx)
+    
+    # Parse low, high, and average from Value column for calculations
+    df[['Low','High','Average']] = df['Value'].apply(lambda v: pd.Series(parse_value_range(v)))
+    
+    # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+    for idx in df.index:
+        # Check if the original row had a percentage
+        if idx in percentage_rows:
+            # Add % to Low, High, Average columns
+            for col in ['Low', 'High', 'Average']:
+                if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                    df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
+    
+    # Restore the original value format from the saved column
+    df['Value'] = df['OriginalValue']
+    
+    # Drop the temporary column
+    df = df.drop('OriginalValue', axis=1)
+    
+    return df
+
+
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -587,28 +634,11 @@ if st.button("🔍 Extract Guidance"):
                         if len(rows) > 1:  # Check if we have header and at least one row of data
                             df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                             
-                            # Store which rows have percentages in the Value column
-                            percentage_rows = []
-                            for idx, row in df.iterrows():
-                                if '%' in str(row[df.columns[1]]):
-                                    percentage_rows.append(idx)
+                            # Process the guidance table with our custom function 
+                            # that preserves original value format
+                            df = process_guidance_table(df)
                             
-                            # Parse low, high, and average from Value column
-                            value_col = df.columns[1]
-                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                            
-                            # Apply GAAP/non-GAAP split
-                            df = split_gaap_non_gaap(df)
-                            
-                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                            for idx in df.index:
-                                # Check if the original row had a percentage
-                                if idx in percentage_rows:
-                                    # Add % to Low, High, Average columns
-                                    for col in ['Low', 'High', 'Average']:
-                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                            df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                            
+                            # Add filing metadata
                             df["FilingDate"] = date_str
                             df["8K_Link"] = url
                             results.append(df)
