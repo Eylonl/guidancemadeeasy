@@ -448,7 +448,7 @@ def find_guidance_paragraphs(text):
 
 def extract_guidance(text, ticker, client):
     """
-    Modified to work with just the guidance paragraphs instead of the full text.
+    Modified to fix the billion to million conversion issue.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -471,11 +471,14 @@ VERY IMPORTANT:
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
 
 CRITICAL FORMATTING FOR BILLION VALUES:
-- When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), you MUST multiply it by 1000 and express it in millions in your output.
+- When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), convert it to millions by multiplying by 1000:
   - Example: "$1.10 billion" should be output as "$1,100 million"
   - Example: "$1.11B" should be output as "$1,110 million"
   - Example: A range of "$1.10-$1.11 billion" should be output as "$1,100-$1,110 million"
-- Always maintain the exact decimal precision when converting (multiply the exact number by 1000)
+- IMPORTANT: Do NOT add extra zeros beyond multiplying by 1000. Just convert the exact number from billions to millions.
+- WRONG: "$1.117 billion" should NOT become "$1,117,000 million"
+- CORRECT: "$1.117 billion" should become "$1,117 million"
+- For ranges, convert each number individually: "$1.117-$1.121 billion" becomes "$1,117-$1,121 million"
 
 IMPORTANT FORMATTING INSTRUCTIONS:
 - For dollar ranges, use the format "$X-$Y" (with dollar sign before each number)
