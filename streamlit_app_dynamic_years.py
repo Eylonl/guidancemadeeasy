@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from openai import OpenAI
 import pandas as pd
 import os
-import io
+import re
 
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
 st.title("📄 SEC 8-K Guidance Extractor")
@@ -24,7 +24,6 @@ def lookup_cik(ticker):
     for entry in data.values():
         if entry["ticker"].upper() == ticker:
             return str(entry["cik_str"]).zfill(10)
-    return None
 
 
 def get_accessions(cik, years_back):
@@ -66,67 +65,14 @@ def get_ex99_1_links(cik, accessions):
                     break
     return links
 
-def extract_guidance(text, ticker, date_str, client, max_chars=30000):
-    # Truncate text if too long
-    if len(text) > max_chars:
-        truncated_text = text[:max_chars]
-        note = "\n[Note: Text truncated due to length]"
-    else:
-        truncated_text = text
-        note = ""
-        
-    # Look for guidance-specific sections
-    guidance_keywords = [
-        "outlook", "guidance", "forecast", "financial outlook", 
-        "fiscal", "expects", "projected", "estimates", "anticipated",
-        "expected", "future", "next quarter", "next fiscal"
-    ]
-    
-    # Extract guidance sections
-    guidance_section = ""
-    for keyword in guidance_keywords:
-        keyword_idx = truncated_text.lower().find(keyword)
-        if keyword_idx != -1:
-            # Get text around the keyword (1000 chars before and after)
-            start_idx = max(0, keyword_idx - 1000)
-            end_idx = min(len(truncated_text), keyword_idx + 1000)
-            section = truncated_text[start_idx:end_idx]
-            guidance_section += section + "\n\n"
-    
-    # If guidance sections found, prioritize them
-    if guidance_section:
-        processed_text = guidance_section + truncated_text[:10000]  # Add some context
-    else:
-        processed_text = truncated_text
-    
-    prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker} from the filing dated {date_str}. 
-
+def extract_guidance(text, ticker, client):
+    prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker}. 
 Return a structured list containing:
 - metric (e.g. Revenue, EPS, Operating Margin)
-- value or range (exactly as stated in the document)
-- for range values, include separate columns for:
-  - low (lower bound of the range)
-  - high (upper bound of the range)
-  - average (mathematical average of low and high)
+- value or range (e.g. $1.5B–$1.6B or $2.05)
 - applicable period (e.g. Q3 FY24, Full Year 2025)
 
-CRITICAL INSTRUCTIONS:
-1. Group together BOTH quarterly AND full year guidance from this filing
-2. For any range values (e.g. "$1.5B-$1.6B"), calculate and include the low, high, and average values
-3. If you run into memory limitations, focus ONLY on extracting the guidance - skip any explanatory text
-4. If you encounter memory errors, provide only the essential data
-
-Respond in table format without commentary, using this format:
-| Metric | Value | Low | High | Average | Period |
-| ------ | ----- | --- | ---- | ------- | ------ |
-| Revenue | $1.5B-$1.6B | $1.5B | $1.6B | $1.55B | Q3 FY24 |
-| Revenue | $6.2B-$6.3B | $6.2B | $6.3B | $6.25B | Full Year 2024 |
-| EPS | $0.57 | $0.57 | $0.57 | $0.57 | Q3 FY24 |
-| EPS | $2.05-$2.10 | $2.05 | $2.10 | $2.075 | Full Year 2024 |
-
-Document Text:{note}
-{processed_text}"""
-
+Respond in table format without commentary.\n\n{text}"""
     try:
         response = client.chat.completions.create(
             model="gpt-4",
@@ -135,9 +81,49 @@ Document Text:{note}
         )
         return response.choices[0].message.content
     except Exception as e:
-        st.warning(f"⚠️ API Error: {str(e)}")
+        st.warning("⚠️ Skipped, no guidance found in filing.")
         return None
 
+def parse_value_range(value_str):
+    """Parse value ranges to extract low, high and average values"""
+    # Remove any non-numeric characters except for decimal points, minus signs, and ranges
+    value_str = value_str.strip()
+    
+    # Initialize values
+    low, high, avg = None, None, None
+    
+    # Check if it's a range with various separators (–, -, to, ~)
+    range_patterns = [
+        r'\$([\d\.]+)[–-~]?\$([\d\.]+)',  # $X-$Y
+        r'\$([\d\.]+)[–-~ ]+to[ –-~]+\$([\d\.]+)',  # $X to $Y
+        r'([\d\.]+)[–-~]?([\d\.]+)',  # X-Y (without $ signs)
+    ]
+    
+    for pattern in range_patterns:
+        match = re.search(pattern, value_str)
+        if match:
+            try:
+                low = float(match.group(1).replace('$', '').replace(',', ''))
+                high = float(match.group(2).replace('$', '').replace(',', ''))
+                avg = (low + high) / 2
+                return low, high, avg
+            except ValueError:
+                continue
+    
+    # Check if it's a single value
+    single_value_pattern = r'\$([\d\.]+)|^([\d\.]+)$'
+    match = re.search(single_value_pattern, value_str)
+    if match:
+        try:
+            # Get the first non-None group
+            val_str = next(g for g in match.groups() if g is not None)
+            val = float(val_str.replace('$', '').replace(',', ''))
+            return val, val, val  # Same value for low, high, and avg
+        except (ValueError, StopIteration):
+            pass
+            
+    # If we get here, we couldn't parse the value
+    return value_str, None, None
 
 if st.button("🔍 Extract Guidance"):
     if not api_key:
@@ -150,7 +136,7 @@ if st.button("🔍 Extract Guidance"):
             client = OpenAI(api_key=api_key)
             if year_input.strip():
                 try:
-                    years_back = int(year_input.strip())
+                    years_back = int(year_input)
                     accessions = get_accessions(cik, years_back)
                 except:
                     st.error("Invalid year input. Must be a number.")
@@ -169,102 +155,65 @@ if st.button("🔍 Extract Guidance"):
                     forw_idx = text.lower().find("forward looking statements")
                     if forw_idx != -1:
                         text = text[:forw_idx]
-                    
-                    table = extract_guidance(text, ticker, date_str, client)
-                    
+                    table = extract_guidance(text, ticker, client)
                     if table and "|" in table:
-                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r and r.strip()]
-                        if len(rows) > 1:  # Ensure we have header and at least one data row
-                            columns = [c.strip() for c in rows[0]]
-                            
-                            # Handle if GPT doesn't return all expected columns
-                            expected_columns = ["Metric", "Value", "Low", "High", "Average", "Period"]
-                            missing_columns = [col for col in expected_columns if col not in columns]
-                            
-                            data_rows = rows[1:]
-                            if data_rows:
-                                # Ensure all rows have the expected number of columns
-                                normalized_rows = []
-                                for row in data_rows:
-                                    # Skip empty rows or malformed data
-                                    if not row or len(row) < 2:
-                                        continue
-                                        
-                                    # If we have fewer columns than expected, pad with empty values
-                                    if len(row) < len(columns):
-                                        row = row + [""] * (len(columns) - len(row))
-                                    # If we have more columns than expected, truncate
-                                    elif len(row) > len(columns):
-                                        row = row[:len(columns)]
-                                    
-                                    normalized_rows.append(row)
-                                
-                                if normalized_rows:
-                                    df = pd.DataFrame(normalized_rows, columns=columns)
-                                    
-                                    # Add missing columns if any
-                                    for col in missing_columns:
-                                        df[col] = ""
-                                    
-                                    # Add metadata columns
-                                    df["FilingDate"] = date_str
-                                    df["8K_Link"] = url
-                                    
-                                    results.append(df)
-                                    st.success("✅ Guidance extracted from this 8-K.")
-                                else:
-                                    st.warning("⚠️ No valid guidance data found after processing.")
-                            else:
-                                st.warning("⚠️ No guidance data rows found in the response.")
-                        else:
-                            st.warning("⚠️ Insufficient data in the response to create a dataframe.")
+                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                        df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                        
+                        # Add the new columns
+                        df["Value"] = df.get("value or range", df.get("Value", ""))
+                        df["Metric"] = df.get("metric", df.get("Metric", ""))
+                        df["Period"] = df.get("applicable period", df.get("Period", ""))
+                        
+                        # Parse values to get Low, High, and Average
+                        parsed_values = df["Value"].apply(parse_value_range)
+                        
+                        # Create new columns from the parsed values
+                        df["Low"] = [v[0] if isinstance(v[0], (int, float)) else None for v in parsed_values]
+                        df["High"] = [v[1] if isinstance(v[1], (int, float)) else None for v in parsed_values]
+                        df["Average"] = [v[2] if isinstance(v[2], (int, float)) else None for v in parsed_values]
+                        
+                        # Add filing information
+                        df["FilingDate"] = date_str
+                        df["8K_Link"] = url
+                        
+                        # Keep only the columns we need
+                        cols_to_keep = [
+                            "Metric", "Value", "Low", "High", "Average", 
+                            "Period", "FilingDate", "8K_Link"
+                        ]
+                        df = df[[col for col in cols_to_keep if col in df.columns]]
+                        
+                        results.append(df)
+                        st.success("✅ Guidance extracted from this 8-K.")
                     else:
-                        st.warning("⚠️ No guidance found in filing or response format invalid.")
+                        st.warning("⚠️ Skipped, no guidance found in filing.")
                 except Exception as e:
-                    st.warning(f"Could not process: {url}. Error: {str(e)}")
+                    st.warning(f"Could not process: {url}")
+                    st.error(f"Error: {str(e)}")
 
             if results:
-                try:
-                    # Ensure all dataframes have the same columns before concatenation
-                    all_columns = set()
-                    for df in results:
-                        all_columns.update(df.columns)
-                    
-                    for i, df in enumerate(results):
-                        for col in all_columns:
-                            if col not in df.columns:
-                                results[i][col] = ""
-                    
-                    combined = pd.concat(results, ignore_index=True)
-                    
-                    # Reorganize columns in a logical order
-                    essential_columns = ["Metric", "Value", "Low", "High", "Average", "Period", "FilingDate", "8K_Link"]
-                    other_columns = [col for col in combined.columns if col not in essential_columns]
-                    final_columns = essential_columns + other_columns
-                    
-                    # Only keep columns that exist in the dataframe
-                    final_columns = [col for col in final_columns if col in combined.columns]
-                    combined = combined[final_columns]
-                    
-                    # Create Excel buffer for download
-                    excel_buffer = io.BytesIO()
-                    combined.to_excel(excel_buffer, index=False)
-                    
-                    # Offer download button
-                    st.download_button(
-                        "📥 Download Excel", 
-                        data=excel_buffer.getvalue(), 
-                        file_name=f"{ticker}_guidance_output.xlsx", 
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    
-                    # Display the data in the app
-                    st.write("### Extracted Guidance Data")
-                    st.dataframe(combined)
-                except Exception as e:
-                    st.error(f"Error creating combined Excel file: {str(e)}")
-            else:
-                st.warning("No guidance data extracted from any filings.")
+                combined = pd.concat(results, ignore_index=True)
+                # Display the table in the app
+                st.subheader("Extracted Guidance")
+                st.dataframe(combined)
                 
-            if len(links) > 1:
-                st.info("📝 **Tip:** If guidance extraction failed for some filings, try again with fewer years or focus on the most recent filing.")
+                # Provide download option
+                import io
+                excel_buffer = io.BytesIO()
+                combined.to_excel(excel_buffer, index=False)
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                
+                # Also provide CSV download option
+                csv_buffer = io.BytesIO()
+                combined.to_csv(csv_buffer, index=False)
+                csv_buffer.seek(0)
+                st.download_button(
+                    "📥 Download CSV",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"{ticker}_guidance_output.csv",
+                    mime="text/csv",
+                    key="csv-download"
+                )
+            else:
+                st.warning("No guidance data extracted.")
