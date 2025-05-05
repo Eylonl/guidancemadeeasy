@@ -126,13 +126,16 @@ Respond in table format without commentary.\n\n{text}"""
 
 
 def split_gaap_non_gaap(df):
+    if 'Value' not in df.columns or 'Metric' not in df.columns:
+        return df  # Avoid crash if column names are missing
+
     rows = []
     for _, row in df.iterrows():
-        val = row['Value']
-        match = re.search(r'(.*?)(\d[\d\.\s%to–-]*)(.*?GAAP).*?(\d[\d\.\s%to–-]*)\s*(.*?non-GAAP)', val, re.I)
+        val = str(row['Value'])
+        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
         if match:
-            gaap_val = f"{match.group(2).strip()} {match.group(3).strip()}"
-            non_gaap_val = f"{match.group(4).strip()} {match.group(5).strip()}"
+            gaap_val = match.group(1).strip() + " GAAP"
+            non_gaap_val = match.group(2).strip() + " non-GAAP"
             for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
                 new_row = row.copy()
                 new_row["Value"] = new_val
