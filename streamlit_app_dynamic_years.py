@@ -11,21 +11,32 @@ import re
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
 
 def extract_number(token: str):
+    """
+    Enhanced function to extract numeric values from text, with improved handling of 
+    both explicit negative signs and parenthetical negative notation.
+    """
     if not token or not isinstance(token, str):
         return None
     
-    # Check if the token is a negative value with a - sign
-    is_negative = token.strip().startswith('-')
+    # Store original token for reference
+    original_token = token.strip()
     
-    # Also check for common financial notation of parentheses to indicate negative
-    parentheses_negative = token.strip().startswith('(') and token.strip().endswith(')')
+    # Check if the token is a negative value with a leading - sign
+    is_negative_sign = original_token.startswith('-')
     
-    # Store whether the number is negative for later use
-    neg = is_negative or parentheses_negative
+    # Check for common financial notation of parentheses to indicate negative
+    # Look for patterns like (0.05) or ( 0.05 ) - with optional whitespace
+    is_parenthetical_negative = (
+        (original_token.startswith('(') and original_token.endswith(')')) or
+        re.match(r'^\(\s*\$?\s*\d+(?:\.\d+)?\s*\)$', original_token)
+    )
+    
+    # Determine if the value should be treated as negative
+    is_negative = is_negative_sign or is_parenthetical_negative
     
     # Remove parentheses, dollar signs, and commas for numerical processing
-    tok = token.replace('(', '').replace(')', '').replace('$','') \
-               .replace(',', '').replace('-', '').strip().lower()
+    tok = original_token.replace('(', '').replace(')', '').replace('$','') \
+                        .replace(',', '').replace('-', '').replace('+', '').strip().lower()
     
     # Convert billions to millions (multiply by 1000)
     factor = 1.0
@@ -47,7 +58,7 @@ def extract_number(token: str):
     
     try:
         val = float(tok) * factor
-        return -val if neg else val
+        return -val if is_negative else val
     except:
         return None
 
@@ -77,8 +88,7 @@ def format_dollar(val):
 def parse_value_range(text: str):
     """
     Enhanced function to parse value ranges from guidance text.
-    Handles formats like "$0.08 to $0.09", "-14% to -13%", etc. with proper negative value processing.
-    Also correctly handles ranges with close values like "181-183" or "$181M-$183M".
+    Properly handles parenthetical negative notation throughout.
     """
     if not isinstance(text, str):
         return (None, None, None)
@@ -87,10 +97,22 @@ def parse_value_range(text: str):
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
         return (0.0, 0.0, 0.0)
     
+    # Detect patterns that clearly indicate negative values
+    contains_negative_indicator = (
+        '(' in text and ')' in text or  # Parenthetical notation
+        '-' in text or                  # Explicit minus sign
+        re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I)  # Negative words
+    )
+    
     # Handle negative values in parentheses (common financial notation)
-    text = re.sub(r'\$\(([0-9\.]+)\)', r'-$\1', text)  # Replace $(0.01) with -$0.01
-    text = re.sub(r'\(([0-9\.]+)%\)', r'-\1%', text)  # Replace (5%) with -5%
-    text = re.sub(r'~\(([0-9\.]+)%\)', r'-\1%', text)  # Replace ~(5%) with -5%
+    # Convert formats like "$(0.05)" or "(0.05)" to "-$0.05" or "-0.05"
+    text = re.sub(r'\$\s*\(\s*(\d+(?:\.\d+)?)\s*\)', r'-$\1', text)
+    text = re.sub(r'\(\s*(\d+(?:\.\d+)?)\s*\)%', r'-\1%', text)
+    text = re.sub(r'\(\s*\$?\s*(\d+(?:\.\d+)?)\s*\)', r'-\1', text)
+    
+    # Additional handling for percentage cases with parentheses
+    text = re.sub(r'\(\s*(\d+(?:\.\d+)?)\s*%\s*\)', r'-\1%', text)  # Replace (5%) with -5%
+    text = re.sub(r'~\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)', r'-\1%', text)  # Replace ~(5%) with -5%
     
     # Handle "decrease of X%" pattern
     decrease_match = re.search(r'decrease\s+of\s+([0-9\.]+)%', text, re.I)
@@ -154,80 +176,125 @@ def parse_value_range(text: str):
     if number_to_range:
         lo = float(number_to_range.group(1).replace(',', ''))
         hi = float(number_to_range.group(2).replace(',', ''))
+        
+        # Check if we need to make both values negative based on context
+        if contains_negative_indicator and not (str(lo).startswith('-') or str(hi).startswith('-')):
+            # Both should be negative if we have negative indicators
+            if re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I):
+                lo, hi = -abs(lo), -abs(hi)
+        
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
     
-    # Look for hyphenated ranges with unit qualifiers
-    # 1. Dollar-dollar with unit: "$181-$183 million"
-    dollar_range_unit = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*[-–—~]\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)', text, re.I)
-    if dollar_range_unit:
-        lo_text = dollar_range_unit.group(1)
-        hi_text = dollar_range_unit.group(2)
-        unit_match = re.search(r'\b(million|billion|M|B)\b', text, re.I)
-        unit = unit_match.group(1) if unit_match else ""
-        
-        if unit and not re.search(r'\b(million|billion|M|B)\b', lo_text, re.I):
-            lo_text = f"{lo_text} {unit}"
-        if unit and not re.search(r'\b(million|billion|M|B)\b', hi_text, re.I):
-            hi_text = f"{hi_text} {unit}"
-        
-        lo = extract_number(lo_text)
-        hi = extract_number(hi_text)
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
+    # Special handling for specific patterns
     
-    # 2. Dollar-dollar: "$0.08-$0.09" or "-$0.08-$0.06"
-    dollar_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*[-–—~]\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
-    if dollar_range:
-        lo = extract_number(dollar_range.group(1))
-        hi = extract_number(dollar_range.group(2))
-        # If first value is negative but second isn't explicitly negative, make it negative too
-        if lo is not None and hi is not None and lo < 0 and hi > 0:
-            # Check if the original text doesn't have an explicit negative sign or minus for the second value
-            if not re.search(r'[-–—~]\s*-\$', dollar_range.group(0)):
-                hi = -hi  # Both values should be negative
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # 3. Percent-percent: "5%-7%" or "-14%-13%"
-    percent_range = re.search(r'(-?\d+(?:\.\d+)?)\s*%\s*[-–—~]\s*(-?\d+(?:\.\d+)?)\s*%', text, re.I)
-    if percent_range:
-        lo = float(percent_range.group(1))
-        hi = float(percent_range.group(2))
-        # If first value is negative but second isn't explicitly negative, make it negative too
-        if lo < 0 and hi > 0:
-            # Check if the original text doesn't have an explicit negative sign or minus for the second value
-            if not re.search(r'%\s*[-–—~]\s*-', percent_range.group(0)):
-                hi = -hi  # Both values should be negative
-        avg = (lo + hi) / 2
-        return (lo, hi, avg)
-    
-    # Special handling for "-X to -Y" format
-    # This captures ranges like "-14% to -13%" or "-$0.08 to -$0.06" where both values are negative
-    neg_range = re.search(r'-(\d+(?:\.\d+)?(?:\s*%)?)\s*(?:to|[-–—~])\s*-(\d+(?:\.\d+)?(?:\s*%)?)', text, re.I)
-    if neg_range:
-        lo_text, hi_text = neg_range.group(1), neg_range.group(2)
-        is_percent = '%' in lo_text or '%' in hi_text
-        
-        # Remove % symbols for conversion
-        lo_text = lo_text.replace('%', '').strip()
-        hi_text = hi_text.replace('%', '').strip()
-        
-        try:
-            lo = -float(lo_text)  # Negative since we already stripped the - sign
-            hi = -float(hi_text)  # Negative since we already stripped the - sign
-            avg = (lo + hi) / 2
-            return (lo, hi, avg)
-        except:
-            pass
+    # Handle parenthetical values like "(0.05)" or "($0.05)"
+    parenthetical_value = re.search(r'\(\s*\$?\s*(\d+(?:\.\d+)?)\s*\)', text, re.I)
+    if parenthetical_value:
+        val = float(parenthetical_value.group(1))
+        return (-val, -val, -val)  # Parenthetical values are always negative in financial context
     
     # Finally check for a single value
     single = re.search(number_token, text, re.I)
     if single:
         v = extract_number(single.group(0))
+        
+        # If the original text indicates the value is negative but our parsed value is positive,
+        # correct it to be negative
+        if contains_negative_indicator and v is not None and v > 0:
+            if re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I):
+                v = -v
+        
         return (v, v, v)
     
     return (None, None, None)
+
+
+def correct_value_signs(df):
+    """
+    Comprehensive function to ensure the sign (positive/negative) of values 
+    is correctly applied based on the context in the original text.
+    """
+    if 'Value' not in df.columns:
+        return df  # Skip if Value column is missing
+    
+    for idx, row in df.iterrows():
+        value_text = str(row.get('Value', ''))
+        
+        # Determine if the value should be negative based on text
+        should_be_negative = (
+            # Check for explicit negative indicators
+            '(' in value_text and ')' in value_text or  # Parenthetical notation
+            '-' in value_text or                      # Explicit minus sign
+            re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', value_text, re.I) or  # Negative words
+            # Check the metric name
+            any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease'])
+        )
+        
+        # Determine if the value should be positive based on text
+        should_be_positive = (
+            # Check for lack of negative indicators
+            not should_be_negative and
+            # Check for explicit dollar sign without negative indicators
+            ('$' in value_text and not '($' in value_text and not '-$' in value_text)
+        )
+        
+        # Get low, high, and average values
+        for col in ['Low', 'High', 'Average']:
+            if col not in df.columns or row.get(col) is None:
+                continue
+                
+            val = row[col]
+            
+            # Convert to numeric for comparison if it's a string
+            if isinstance(val, str):
+                # Extract numeric value from string
+                try:
+                    val_numeric = float(re.sub(r'[^\d.-]', '', val))
+                except:
+                    continue
+                
+                # Fix incorrect signs
+                if should_be_negative and val_numeric > 0:
+                    # Value should be negative but is positive
+                    if '%' in val:
+                        df.at[idx, col] = f"-{abs(val_numeric):.1f}%"
+                    elif '$' in val:
+                        if abs(val_numeric) >= 100:
+                            df.at[idx, col] = f"-${abs(val_numeric):.0f}"
+                        elif abs(val_numeric) >= 10:
+                            df.at[idx, col] = f"-${abs(val_numeric):.1f}"
+                        else:
+                            df.at[idx, col] = f"-${abs(val_numeric):.2f}"
+                    else:
+                        # Just a number
+                        df.at[idx, col] = f"-{abs(val_numeric)}"
+                        
+                elif should_be_positive and val_numeric < 0:
+                    # Value should be positive but is negative
+                    if '%' in val:
+                        df.at[idx, col] = f"{abs(val_numeric):.1f}%"
+                    elif '$' in val:
+                        if abs(val_numeric) >= 100:
+                            df.at[idx, col] = f"${abs(val_numeric):.0f}"
+                        elif abs(val_numeric) >= 10:
+                            df.at[idx, col] = f"${abs(val_numeric):.1f}"
+                        else:
+                            df.at[idx, col] = f"${abs(val_numeric):.2f}"
+                    else:
+                        # Just a number
+                        df.at[idx, col] = f"{abs(val_numeric)}"
+                        
+            else:  # Numeric value
+                # Fix incorrect signs
+                if should_be_negative and val > 0:
+                    # Value should be negative but is positive
+                    df.at[idx, col] = -abs(val)
+                elif should_be_positive and val < 0:
+                    # Value should be positive but is negative
+                    df.at[idx, col] = abs(val)
+    
+    return df
 
 
 def check_range_consistency(df):
@@ -245,20 +312,22 @@ def check_range_consistency(df):
             
         # Convert to float if they're strings with % or $ signs
         if isinstance(low, str):
-            low_val = float(low.replace('%', '').replace('$', '').strip())
+            low_val = float(re.sub(r'[^\d.-]', '', low))
         else:
             low_val = low
             
         if isinstance(high, str):
-            high_val = float(high.replace('%', '').replace('$', '').strip())
+            high_val = float(re.sub(r'[^\d.-]', '', high))
         else:
             high_val = high
         
+        # Get original value text for context
+        original_value = str(row.get('Value', ''))
+        
         # If low is negative and high is positive, but the original value contains
         # language suggesting both should be negative, make high negative too
-        original_value = str(row.get('Value', ''))
         if low_val < 0 and high_val > 0:
-            if re.search(r'(?:decline|decrease|down|negative|loss)', original_value, re.I):
+            if re.search(r'(?:decline|decrease|down|negative|loss)', original_value, re.I) or '(' in original_value:
                 # Both values should be negative - fix the high value
                 if isinstance(high, str):
                     if '%' in high:
@@ -288,6 +357,90 @@ def check_range_consistency(df):
                     else:
                         df.at[idx, 'Average'] = avg
         
+        # If both low and high are positive but should be negative based on context
+        elif low_val > 0 and high_val > 0:
+            should_be_negative = (
+                # Check for explicit negative indicators
+                '(' in original_value or  # Parenthetical notation
+                '-' in original_value or  # Explicit minus sign
+                re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', original_value, re.I) or  # Negative words
+                # Check the metric name
+                any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease'])
+            )
+            
+            if should_be_negative:
+                # Both values should be negative - fix both values
+                for col, val in [('Low', low_val), ('High', high_val)]:
+                    if isinstance(df.loc[idx, col], str):
+                        if '%' in df.loc[idx, col]:
+                            df.at[idx, col] = f"{-abs(val):.1f}%"
+                        elif '$' in df.loc[idx, col]:
+                            if abs(val) >= 100:
+                                df.at[idx, col] = f"-${abs(val):.0f}"
+                            elif abs(val) >= 10:
+                                df.at[idx, col] = f"-${abs(val):.1f}"
+                            else:
+                                df.at[idx, col] = f"-${abs(val):.2f}"
+                    else:
+                        df.at[idx, col] = -abs(val)
+                
+                # Also fix the average
+                if 'Average' in df.columns:
+                    avg = ((-abs(low_val)) + (-abs(high_val))) / 2
+                    if isinstance(row.get('Average'), str) and '%' in row.get('Average', ''):
+                        df.at[idx, 'Average'] = f"{avg:.1f}%"
+                    elif isinstance(row.get('Average'), str) and '$' in row.get('Average', ''):
+                        if abs(avg) >= 100:
+                            df.at[idx, 'Average'] = f"${avg:.0f}"
+                        elif abs(avg) >= 10:
+                            df.at[idx, 'Average'] = f"${avg:.1f}"
+                        else:
+                            df.at[idx, 'Average'] = f"${avg:.2f}"
+                    else:
+                        df.at[idx, 'Average'] = avg
+        
+        # If both low and high are negative but should be positive based on context
+        elif low_val < 0 and high_val < 0:
+            should_be_positive = (
+                # Check for lack of negative indicators
+                not '(' in original_value and 
+                not '-' in original_value and
+                not re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', original_value, re.I) and
+                # Check for explicit dollar sign without negative indicators
+                ('$' in original_value and not '($' in original_value and not '-$' in original_value)
+            )
+            
+            if should_be_positive:
+                # Both values should be positive - fix both values
+                for col, val in [('Low', low_val), ('High', high_val)]:
+                    if isinstance(df.loc[idx, col], str):
+                        if '%' in df.loc[idx, col]:
+                            df.at[idx, col] = f"{abs(val):.1f}%"
+                        elif '$' in df.loc[idx, col]:
+                            if abs(val) >= 100:
+                                df.at[idx, col] = f"${abs(val):.0f}"
+                            elif abs(val) >= 10:
+                                df.at[idx, col] = f"${abs(val):.1f}"
+                            else:
+                                df.at[idx, col] = f"${abs(val):.2f}"
+                    else:
+                        df.at[idx, col] = abs(val)
+                
+                # Also fix the average
+                if 'Average' in df.columns:
+                    avg = (abs(low_val) + abs(high_val)) / 2
+                    if isinstance(row.get('Average'), str) and '%' in row.get('Average', ''):
+                        df.at[idx, 'Average'] = f"{avg:.1f}%"
+                    elif isinstance(row.get('Average'), str) and '$' in row.get('Average', ''):
+                        if abs(avg) >= 100:
+                            df.at[idx, 'Average'] = f"${avg:.0f}"
+                        elif abs(avg) >= 10:
+                            df.at[idx, 'Average'] = f"${avg:.1f}"
+                        else:
+                            df.at[idx, 'Average'] = f"${avg:.2f}"
+                    else:
+                        df.at[idx, 'Average'] = avg
+        
         # Check for duplicate values in ranges
         # If Low and High are identical but the Value column indicates a range
         if low_val == high_val and ('-' in original_value or ' to ' in original_value.lower()):
@@ -300,16 +453,26 @@ def check_range_consistency(df):
                         new_lo = float(lo_str)
                         new_hi = float(hi_str)
                         
+                        # Check if they should be negative
+                        should_be_negative = (
+                            '(' in original_value or  # Parenthetical notation
+                            '-' in original_value or  # Explicit minus sign
+                            re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', original_value, re.I)  # Negative words
+                        )
+                        
+                        if should_be_negative:
+                            new_lo, new_hi = -abs(new_lo), -abs(new_hi)
+                        
                         # Update the values in the dataframe
                         if isinstance(low, str):
                             if '%' in low:
                                 df.at[idx, 'Low'] = f"{new_lo:.1f}%"
                                 df.at[idx, 'High'] = f"{new_hi:.1f}%"
                             elif '$' in low:
-                                if new_lo >= 100:
+                                if abs(new_lo) >= 100:
                                     df.at[idx, 'Low'] = f"${new_lo:.0f}"
                                     df.at[idx, 'High'] = f"${new_hi:.0f}"
-                                elif new_lo >= 10:
+                                elif abs(new_lo) >= 10:
                                     df.at[idx, 'Low'] = f"${new_lo:.1f}"
                                     df.at[idx, 'High'] = f"${new_hi:.1f}"
                                 else:
@@ -326,9 +489,9 @@ def check_range_consistency(df):
                                 if '%' in row.get('Average', ''):
                                     df.at[idx, 'Average'] = f"{new_avg:.1f}%"
                                 elif '$' in row.get('Average', ''):
-                                    if new_avg >= 100:
+                                    if abs(new_avg) >= 100:
                                         df.at[idx, 'Average'] = f"${new_avg:.0f}"
-                                    elif new_avg >= 10:
+                                    elif abs(new_avg) >= 10:
                                         df.at[idx, 'Average'] = f"${new_avg:.1f}"
                                     else:
                                         df.at[idx, 'Average'] = f"${new_avg:.2f}"
@@ -707,8 +870,8 @@ def find_guidance_paragraphs(text):
 
 def extract_guidance(text, ticker, client):
     """
-    Enhanced function to extract guidance from SEC filings with better handling of numeric ranges,
-    negative ranges, and billion to million conversion.
+    Enhanced function to extract guidance from SEC filings with improved handling of 
+    parenthetical negative values and other formats.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -728,26 +891,30 @@ VERY IMPORTANT:
 - Include both quarterly and full-year guidance if available
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
 
-CRITICAL HANDLING OF NUMERIC RANGES:
-1. For ALL ranges, ensure the correct low and high values are properly identified and separated:
+CRITICAL: HANDLING POSITIVE AND NEGATIVE VALUES
+
+1. CORRECTLY HANDLE NEGATIVE VALUES:
+   - In financial reporting, values can be shown as negative in TWO ways:
+   - With a minus sign: "-$0.05" or "-5%"
+   - With parentheses: "($0.05)" or "(5%)" - THESE ARE ALWAYS NEGATIVE values
+   - Always maintain parenthetical notation when it appears in the original text
+   - Example: Value of "($0.05)" should be output as "($0.05)" (not "$0.05" or "-$0.05")
+   - Example: Value of "(5%)" should be output as "(5%)" (not "5%" or "-5%")
+
+2. CORRECTLY HANDLE POSITIVE VALUES:
+   - Do NOT add minus signs or parentheses to positive values
+   - Example: "$0.05" must be output as "$0.05" (not "-$0.05" or "($0.05)")
+   - Example: "5%" must be output as "5%" (not "-5%" or "(5%)")
+   - Only use minus signs or parentheses when the original text explicitly indicates a negative value
+
+3. CRITICAL HANDLING OF NUMERIC RANGES:
    - ALWAYS include both the lower AND upper bounds in ranges, even when they differ by small amounts
    - Example: "$181 million to $183 million" must be output as "$181 million to $183 million" (not just "$181 million")
    - Example: "$181-$183 million" must be output as "$181-$183 million" (not just "$181 million")
-   - Example: "$181M-$183M" must be output as "$181M-$183M" (not just "$181M")
    - Example: "181-183" must be output as "181-183" (not just "181")
-   - Example: Revenue of "$181 million to $183 million" must include both values, not just the lower bound
-
-2. For NEGATIVE PERCENTAGES:
-   - Format negative percentage ranges with minus signs on BOTH numbers, never using parentheses
-   - CORRECT: "-14% to -13%" (use this format)
-   - INCORRECT: "(-14% to -13%)" or "(-14%) to (-13%)" (don't use parentheses)
-   - When endpoints have different signs, maintain correct signs: "-5% to +2%"
-
-3. For NEGATIVE DOLLAR VALUES:
-   - Format negative dollar ranges with minus signs on BOTH numbers, never using parentheses
-   - CORRECT: "-$0.08 to -$0.06" (use this format)
-   - INCORRECT: "($0.08) to ($0.06)" or "($0.08 to $0.06)" (don't use parentheses)
-   - When endpoints have different signs, maintain correct signs: "-$0.01 to $0.03"
+   - For negative ranges, maintain consistent notation throughout the range:
+   - Example: "($0.08) to ($0.06)" should be output exactly as "($0.08) to ($0.06)"
+   - Example: "-$0.08 to -$0.06" should be output exactly as "-$0.08 to -$0.06"
 
 CRITICAL FORMATTING FOR BILLION VALUES:
 - When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), convert it to millions by multiplying by 1000:
@@ -871,55 +1038,66 @@ if st.button("🔍 Extract Guidance"):
                         if len(rows) > 1:  # Check if we have header and at least one row of data
                             df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                             
-                            # Store which rows have percentages in the Value column
+                            # Store which rows have percentages or parenthetical values in the Value column
                             percentage_rows = []
+                            parenthetical_rows = []
                             for idx, row in df.iterrows():
-                                if '%' in str(row[df.columns[1]]):
+                                value_col = df.columns[1]  # Usually "Value"
+                                val_text = str(row[value_col])
+                                if '%' in val_text:
                                     percentage_rows.append(idx)
+                                if '(' in val_text and ')' in val_text:
+                                    parenthetical_rows.append(idx)
                             
                             # Parse low, high, and average from Value column
                             value_col = df.columns[1]
                             df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
                             
+                            # Apply special corrections for parenthetical values
+                            # This ensures that values with parentheses like ($0.05) remain negative
+                            for idx in parenthetical_rows:
+                                for col in ['Low', 'High', 'Average']:
+                                    if col in df.columns and df.loc[idx, col] is not None:
+                                        val = df.loc[idx, col]
+                                        if isinstance(val, (int, float)) and val > 0:
+                                            # If the original was parenthetical (negative) but our value is positive, fix it
+                                            df.at[idx, col] = -abs(val)
+                                        elif isinstance(val, str) and not val.startswith('-'):
+                                            # Extract numeric portion if it's a string
+                                            try:
+                                                num_val = float(re.sub(r'[^\d.]', '', val))
+                                                # Reformat with negative sign
+                                                if '%' in val:
+                                                    df.at[idx, col] = f"-{abs(num_val):.1f}%"
+                                                elif '$' in val:
+                                                    if abs(num_val) >= 100:
+                                                        df.at[idx, col] = f"-${abs(num_val):.0f}"
+                                                    elif abs(num_val) >= 10:
+                                                        df.at[idx, col] = f"-${abs(num_val):.1f}"
+                                                    else:
+                                                        df.at[idx, col] = f"-${abs(num_val):.2f}"
+                                                else:
+                                                    df.at[idx, col] = f"-{abs(num_val)}"
+                                            except:
+                                                pass
+                            
+                            # Apply comprehensive sign correction based on context
+                            df = correct_value_signs(df)
+                            
                             # Apply GAAP/non-GAAP split
                             df = split_gaap_non_gaap(df)
                             
                             # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                            for idx in df.index:
-                                # Check if the original row had a percentage
-                                if idx in percentage_rows:
-                                    # Add % to Low, High, Average columns
-                                    for col in ['Low', 'High', 'Average']:
-                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                            df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                            for idx in percentage_rows:
+                                # Add % to Low, High, Average columns
+                                for col in ['Low', 'High', 'Average']:
+                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                        df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
                             
-                            # Apply consistency checks to fix any issues with negative ranges
+                            # Apply a final consistency check to fix any remaining issues with negative ranges
                             df = check_range_consistency(df)
                             
-                            # Check for potential issues and missing data
-                            for idx, row in df.iterrows():
-                                # For metrics known to usually be negative (Loss, Decrease, etc.)
-                                if any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease']):
-                                    # Check if values should be negative
-                                    for col in ['Low', 'High', 'Average']:
-                                        if col in df.columns and row.get(col) is not None:
-                                            val = row[col]
-                                            if isinstance(val, (int, float)) and val > 0:
-                                                # If it's positive but should be negative, fix it
-                                                df.at[idx, col] = -abs(val)
-                                            elif isinstance(val, str) and val.replace('$', '').replace('%', '').strip().startswith('-') == False:
-                                                # Remove any $ or % for conversion
-                                                clean_val = val.replace('$', '').replace('%', '').strip()
-                                                try:
-                                                    num_val = float(clean_val)
-                                                    # Reformat with negative sign
-                                                    if '%' in val:
-                                                        df.at[idx, col] = f"-{abs(num_val):.1f}%"
-                                                    elif '$' in val:
-                                                        df.at[idx, col] = f"-${abs(num_val):.2f}"
-                                                except:
-                                                    pass
-                            
+                            # Add metadata columns
                             df["FilingDate"] = date_str
                             df["8K_Link"] = url
                             results.append(df)
@@ -973,4 +1151,3 @@ if st.button("🔍 Extract Guidance"):
                 st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.warning("No guidance data extracted.")
-                   
