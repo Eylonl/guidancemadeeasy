@@ -8,16 +8,16 @@ import pandas as pd
 import re
 import io
 
-# ─── PAGE SETUP ──────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="SEC 8‑K Guidance Extractor", layout="centered")
-st.title("📄 SEC 8‑K Guidance Extractor")
+# PAGE SETUP
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
 
-# ─── INPUTS ──────────────────────────────────────────────────────────────────────
+# INPUTS
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
 api_key = st.text_input("Enter OpenAI API Key (for GPT fallback)", type="password")
-years_back = st.text_input("Years back to search for 8‑K filings (blank = most recent only)", "")
+years_back = st.text_input("Years back to search for 8-K filings (blank = most recent only)", "")
 
-# ─── HELPER FUNCTIONS ────────────────────────────────────────────────────────────
+# HELPER FUNCTIONS
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
 
 def extract_number(token: str):
@@ -28,11 +28,11 @@ def extract_number(token: str):
                .replace(',', '').strip().lower()
     factor = 1.0
     if tok.endswith('billion'):
-        tok, factor = tok[:-7].strip(), 1_000
+        tok, factor = tok[:-7].strip(), 1000
     elif tok.endswith('million'):
         tok, factor = tok[:-7].strip(), 1
     elif tok.endswith('b'):
-        tok, factor = tok[:-1].strip(), 1_000
+        tok, factor = tok[:-1].strip(), 1000
     elif tok.endswith('m'):
         tok, factor = tok[:-1].strip(), 1
     elif tok.endswith('k'):
@@ -50,8 +50,9 @@ def parse_value_range(text: str):
         return 0.0, 0.0, 0.0
     rng = re.search(rf'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
     if rng:
-        lo, hi = extract_number(rng.group(1)), extract_number(rng.group(2))
-        avg = (lo+hi)/2 if lo is not None and hi is not None else None
+        lo = extract_number(rng.group(1))
+        hi = extract_number(rng.group(2))
+        avg = (lo + hi)/2 if lo is not None and hi is not None else None
         return lo, hi, avg
     single = re.search(number_token, text, re.I)
     if single:
@@ -88,7 +89,6 @@ def local_extract_guidance(text: str):
             continue
         if in_targets:
             hdr = ln.strip().rstrip(':')
-            # detect period line
             if re.search(r'(quarter|year)\s+fiscal\s+year', hdr, re.I):
                 period = normalise_period(hdr)
                 continue
@@ -107,7 +107,7 @@ def local_extract_guidance(text: str):
         return df
     return None
 
-# ─── EDGAR FETCHING ───────────────────────────────────────────────────────────────
+# EDGAR FETCHING
 @st.cache_data
 def lookup_cik(tick):
     hdr = {'User-Agent': 'Your Name contact@domain.com'}
@@ -132,24 +132,26 @@ def get_recent(cik):
     lst = get_accessions(cik,10)
     return lst[:1]
 
-def get_ex99_links(cik, accs):
-    hdr = {'User-Agent':'Your Name'}
-    links=[]
-    for an, d in accs:
-        base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{an.replace('-','')}/"
-        idx = base+f"{an}-index.htm"
-        r = requests.get(idx, headers=hdr)
-        if r.status_code!=200: continue
-        soup=BeautifulSoup(r.text,'html.parser')
-        for tr in soup.find_all('tr'):
-            if '99.1' in tr.get_text().lower():
-                tds=tr.find_all('td')
-                if len(tds)>=3:
-                    links.append((d, base+tds[2].text.strip()))
+def get_ex99_links(cik: str, accessions):
+    # Look for any ex991*.htm or .html exhibit link
+    hdr = {'User-Agent': 'Your Name contact@domain.com'}
+    links = []
+    for an, dt in accessions:
+        base_dir = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{an.replace('-', '')}/"
+        idx_url = base_dir + f"{an}-index.htm"
+        resp = requests.get(idx_url, headers=hdr)
+        if resp.status_code != 200:
+            continue
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if re.match(r"(?i)^ex991.*\.(htm|html)$", href):
+                full = href if href.lower().startswith("http") else base_dir + href
+                links.append((dt, full))
                 break
     return links
 
-# ─── GPT EXTRACTION ───────────────────────────────────────────────────────────────
+# GPT EXTRACTION
 def extract_guidance(text, tick, client):
     prompt = (
         f"You are a financial analyst assistant. Extract forward-looking guidance for {tick} "
@@ -163,7 +165,7 @@ def extract_guidance(text, tick, client):
     except:
         return None
 
-# ─── MAIN ────────────────────────────────────────────────────────────────────────
+# MAIN
 if st.button("🔍 Extract Guidance"):
     if not ticker:
         st.error("Enter a ticker."); st.stop()
@@ -179,29 +181,30 @@ if st.button("🔍 Extract Guidance"):
     if not links:
         st.warning("No Ex-99.1 links."); st.stop()
     client = OpenAI(api_key=api_key) if api_key else None
-    results=[]
+    results = []
     for date_str, url in links:
         st.write(f"📄 Processing {url}")
         try:
-            html=requests.get(url, headers={'User-Agent':'MyCo'}).text
-            text=BeautifulSoup(html,'html.parser').get_text()
-            idx=text.lower().find('forward looking statements')
-            if idx>=0: text=text[:idx]
-            df=None
+            html = requests.get(url, headers={'User-Agent':'MyCo'}).text
+            text = BeautifulSoup(html,'html.parser').get_text()
+            idx = text.lower().find('forward looking statements')
+            if idx >= 0:
+                text = text[:idx]
+            df = None
             # GPT path
             if client:
-                md=extract_guidance(text, ticker, client)
+                md = extract_guidance(text, ticker, client)
                 if md and '|' in md:
-                    lines=[l for l in md.splitlines() if l.strip().startswith('|')]
-                    if len(lines)>=2:
-                        hdr=[h.strip() for h in lines[0].split('|')[1:-1]]
-                        rows=[]
+                    lines = [l for l in md.splitlines() if l.strip().startswith("|")]
+                    if len(lines) >= 2:
+                        hdr = [h.strip() for h in lines[0].split("|")[1:-1]]
+                        rows = []
                         for ln in lines[2:]:
-                            parts=ln.split('|')[1:-1]
-                            if len(parts)==len(hdr):
+                            parts = ln.split("|")[1:-1]
+                            if len(parts) == len(hdr):
                                 rows.append([p.strip() for p in parts])
                         if rows:
-                            df=pd.DataFrame(rows, columns=hdr)
+                            df = pd.DataFrame(rows, columns=hdr)
             # fallback local parser
             if df is None:
                 df = local_extract_guidance(text)
@@ -215,15 +218,14 @@ if st.button("🔍 Extract Guidance"):
                 df[['Low','High','Avg']] = df['Value'].apply(lambda v: pd.Series(parse_value_range(v)))
             if 'Period' in df.columns:
                 df['Period'] = df['Period'].apply(lambda p: normalise_period(p) or p)
-            df['FilingDate']=date_str
-            df['8K_Link']=url
+            df['FilingDate'] = date_str
+            df['8K_Link'] = url
             results.append(df)
-            st.success("✅ Guidance extracted.")
         except Exception as e:
             st.warning(f"Failed {url}: {e}")
     if results:
-        combined=pd.concat(results, ignore_index=True)
-        buf=io.BytesIO()
+        combined = pd.concat(results, ignore_index=True)
+        buf = io.BytesIO()
         combined.to_excel(buf, index=False)
         st.download_button("📥 Download Excel", buf.getvalue(),
                            file_name=f"{ticker}_guidance.xlsx",
