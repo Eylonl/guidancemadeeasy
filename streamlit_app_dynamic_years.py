@@ -72,6 +72,13 @@ def get_ex99_1_links(cik, accessions):
 
 def extract_guidance(text, ticker, client):
     prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker}. 
+
+IMPORTANT: When a metric has both GAAP and non-GAAP values, split them into separate rows in your table.
+For example, if you see: "Gross margin of 81.5% to 82.0% on a GAAP basis and in the range of 84.0% to 84.5% on a non-GAAP basis"
+Create TWO separate rows:
+1. Metric: Gross margin (GAAP), Value: 81.5% to 82.0%, Period: [applicable period]
+2. Metric: Gross margin (non-GAAP), Value: 84.0% to 84.5%, Period: [applicable period]
+
 Return a structured list containing:
 - metric (e.g. Revenue, EPS, Operating Margin)
 - value or range (e.g. $1.5B–$1.6B or $2.05)
