@@ -29,14 +29,6 @@ def extract_number(token: str):
     except:
         return None
 
-
-def format_percent(val):
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        return f"{val:.1f}%"
-    return val
-
 def parse_value_range(text: str):
     if not isinstance(text, str):
         return (None, None, None)
@@ -146,12 +138,9 @@ def split_gaap_non_gaap(df):
                 new_row["Value"] = new_val
                 new_row["Metric"] = f"{row['Metric']} ({label})"
                 lo, hi, avg = parse_value_range(new_val)
-                new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
+                new_row["Low"], new_row["High"], new_row["Average"] = lo, hi, avg
                 rows.append(new_row)
         else:
-            row["Low"] = format_percent(row["Low"])
-            row["High"] = format_percent(row["High"])
-            row["Average"] = format_percent(row["Average"])
             rows.append(row)
     return pd.DataFrame(rows)
 
