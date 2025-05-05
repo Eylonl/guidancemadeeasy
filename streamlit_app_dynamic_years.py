@@ -61,21 +61,6 @@ st.title("📄 SEC 8-K Guidance Extractor")
 ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
 
-# Fiscal year end month selection (defaults to calendar year - December)
-fiscal_year_end_options = [
-    (1, "January"), (2, "February"), (3, "March"), 
-    (4, "April"), (5, "May"), (6, "June"),
-    (7, "July"), (8, "August"), (9, "September"),
-    (10, "October"), (11, "November"), (12, "December")
-]
-
-fiscal_year_end_month = st.selectbox(
-    "Select fiscal year end month",
-    options=[m[0] for m in fiscal_year_end_options],
-    format_func=lambda x: next((m[1] for m in fiscal_year_end_options if m[0] == x), x),
-    index=11  # Default to December (calendar year)
-)
-
 # Both filter options displayed at the same time
 year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
 quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
@@ -89,6 +74,38 @@ def lookup_cik(ticker):
     for entry in data.values():
         if entry["ticker"].upper() == ticker:
             return str(entry["cik_str"]).zfill(10)
+
+
+def get_fiscal_year_end(ticker, cik):
+    """
+    Get the fiscal year end month for a company from SEC data.
+    Returns the month (1-12) and day.
+    """
+    try:
+        headers = {'User-Agent': 'Your Name Contact@domain.com'}
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        resp = requests.get(url, headers=headers)
+        data = resp.json()
+        
+        # Extract fiscal year end info - format is typically "MMDD" 
+        if 'fiscalYearEnd' in data:
+            fiscal_year_end = data['fiscalYearEnd']
+            if len(fiscal_year_end) == 4:  # MMDD format
+                month = int(fiscal_year_end[:2])
+                day = int(fiscal_year_end[2:])
+                
+                month_name = datetime(2000, month, 1).strftime('%B')
+                st.success(f"✅ Retrieved fiscal year end for {ticker}: {month_name} {day}")
+                
+                return month, day
+        
+        # If not found, default to December 31 (calendar year)
+        st.warning(f"⚠️ Could not determine fiscal year end for {ticker} from SEC data. Using December 31 (calendar year).")
+        return 12, 31
+        
+    except Exception as e:
+        st.warning(f"⚠️ Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
+        return 12, 31
 
 
 def generate_fiscal_quarters(fiscal_year_end_month):
@@ -118,7 +135,7 @@ def generate_fiscal_quarters(fiscal_year_end_month):
     return quarters
 
 
-def get_fiscal_dates(quarter_num, year_num, fiscal_year_end_month):
+def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day):
     """
     Calculate the appropriate date range for a fiscal quarter
     based on the fiscal year end month.
@@ -189,7 +206,7 @@ def get_fiscal_dates(quarter_num, year_num, fiscal_year_end_month):
     expected_report = f"~{report_start.strftime('%B %d, %Y')} to {report_end.strftime('%B %d, %Y')}"
     
     # Display fiscal quarter information
-    st.write(f"Fiscal year ends in {datetime(2000, fiscal_year_end_month, 1).strftime('%B')}")
+    st.write(f"Fiscal year ends in {datetime(2000, fiscal_year_end_month, 1).strftime('%B')} {fiscal_year_end_day}")
     st.write(f"Quarter {quarter_num} spans: {datetime(2000, start_month, 1).strftime('%B')}-{datetime(2000, end_month, 1).strftime('%B')}")
     
     # Show all quarters
@@ -208,7 +225,7 @@ def get_fiscal_dates(quarter_num, year_num, fiscal_year_end_month):
     }
 
 
-def get_accessions(cik, years_back=None, specific_quarter=None, fiscal_year_end_month=12):
+def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
     """General function for finding filings"""
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
@@ -217,8 +234,8 @@ def get_accessions(cik, years_back=None, specific_quarter=None, fiscal_year_end_
     filings = data["filings"]["recent"]
     accessions = []
     
-    # Get ticker from session state
-    ticker = st.session_state.get('ticker', '').upper()
+    # Auto-detect fiscal year end from SEC data
+    fiscal_year_end_month, fiscal_year_end_day = get_fiscal_year_end(ticker, cik)
     
     if years_back:
         # Modified to add one extra quarter (approximately 91.25 days)
@@ -249,7 +266,7 @@ def get_accessions(cik, years_back=None, specific_quarter=None, fiscal_year_end_
             year_num = int(year)
             
             # Get fiscal dates based on fiscal year end month
-            fiscal_info = get_fiscal_dates(quarter_num, year_num, fiscal_year_end_month)
+            fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day)
             
             if not fiscal_info:
                 return []
@@ -387,19 +404,19 @@ if st.button("🔍 Extract Guidance"):
             # Handle different filtering options
             if quarter_input.strip():
                 # Quarter input takes precedence
-                accessions = get_accessions(cik, specific_quarter=quarter_input.strip(), fiscal_year_end_month=fiscal_year_end_month)
+                accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
                 if not accessions:
                     st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
             elif year_input.strip():
                 try:
                     years_back = int(year_input.strip())
-                    accessions = get_accessions(cik, years_back=years_back)
+                    accessions = get_accessions(cik, ticker, years_back=years_back)
                 except:
                     st.error("Invalid year input. Must be a number.")
                     accessions = []
             else:
                 # Default to most recent if neither input is provided
-                accessions = get_accessions(cik)
+                accessions = get_accessions(cik, ticker)
 
             links = get_ex99_1_links(cik, accessions)
             results = []
