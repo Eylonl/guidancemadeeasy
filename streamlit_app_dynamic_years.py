@@ -91,17 +91,36 @@ Respond in table format without commentary.\n\n{text}"""
 
 
 def extract_number(text):
-    # This is a simplified helper function to extract numeric values
+    # This helper function extracts numeric values from text
     if not text:
         return None
+        
+    # Handle parentheses as negative numbers - e.g., (5.0) means -5.0
+    is_negative = False
+    if text.startswith("(") and text.endswith(")"):
+        is_negative = True
+        text = text[1:-1]  # Remove parentheses
+    
+    # Clean the text
     clean_text = text.replace("$", "").replace(",", "")
+    
+    # Extract the number
     try:
+        # Check if there's an explicit negative sign
+        if clean_text.startswith("-"):
+            is_negative = True
+            clean_text = clean_text[1:]  # Remove the negative sign for processing
+            
+        # Handle units
         if "B" in clean_text.upper():
-            return float(clean_text.upper().replace("B", "")) * 1000000000
+            value = float(clean_text.upper().replace("B", "")) * 1000000000
         elif "M" in clean_text.upper():
-            return float(clean_text.upper().replace("M", "")) * 1000000
+            value = float(clean_text.upper().replace("M", "")) * 1000000
         else:
-            return float(clean_text)
+            value = float(clean_text)
+            
+        # Apply negative sign if needed
+        return -value if is_negative else value
     except ValueError:
         return None
 
@@ -118,13 +137,22 @@ def parse_value_range(text):
         return 0, 0, 0
     
     # Case 2: Percentage values (including approximate)
-    percent_match = re.search(r'(?:approximately|about|around|roughly|~|circa)?\s*(\d+\.?\d*)%', text, re.IGNORECASE)
+    # Handle both positive and negative percentages
+    percent_match = re.search(r'(?:approximately|about|around|roughly|~|circa)?\s*(\(?([-+]?\d+\.?\d*)\)?%)', text, re.IGNORECASE)
     if percent_match:
-        percent_value = float(percent_match.group(1))
+        # Get the percentage value, ensuring proper handling of negative values
+        percent_str = percent_match.group(2)
+        
+        # If wrapped in parentheses without explicit negative sign, it's negative
+        if "(" in percent_match.group(1) and ")" in percent_match.group(1) and not percent_str.startswith("-"):
+            percent_value = -float(percent_str)
+        else:
+            percent_value = float(percent_str)
+            
         return percent_value, percent_value, percent_value
     
     # Case 3: Range values like "$1.5B-$1.6B"
-    range_match = re.search(r'[$]?([\d\.]+[KMB]?)(?:[ ]*[-–—~][ ]*|\s+to\s+)[$]?([\d\.]+[KMB]?)', text, re.IGNORECASE)
+    range_match = re.search(r'[$]?([-+]?[\d\.]+[KMB]?)(?:[ ]*[-–—~][ ]*|\s+to\s+)[$]?([-+]?[\d\.]+[KMB]?)', text, re.IGNORECASE)
     if range_match:
         low = extract_number(range_match.group(1))
         high = extract_number(range_match.group(2))
@@ -132,7 +160,7 @@ def parse_value_range(text):
             return low, high, (low + high) / 2
     
     # Case 4: Single values like "$1.5B"
-    single_match = re.search(r'[$]?([\d\.]+[KMB]?)(?:\s|$)', text, re.IGNORECASE)
+    single_match = re.search(r'[$]?([-+]?[\d\.]+[KMB]?)(?:\s|$)', text, re.IGNORECASE)
     if single_match:
         value = extract_number(single_match.group(1))
         if value is not None:
@@ -223,6 +251,9 @@ if st.button("🔍 Extract Guidance"):
                             # Parse values to get Low, High, Average
                             parsed_values = df["Value"].apply(parse_value_range)
                             
+                            # Check if the original value is a percentage
+                            is_percentage = df["Value"].str.contains("%", regex=False)
+                            
                             # Add new columns
                             df["Low"] = [v[0] if isinstance(v[0], (int, float)) else None for v in parsed_values]
                             df["High"] = [v[1] if isinstance(v[1], (int, float)) else None for v in parsed_values]
@@ -233,6 +264,12 @@ if st.button("🔍 Extract Guidance"):
                                 (v[2] if isinstance(v[2], str) else None) 
                                 for v in parsed_values
                             ]
+                            
+                            # Format percentage values with % symbol
+                            for col in ["Low", "High", "Average"]:
+                                # Only format cells where the original value was a percentage
+                                mask = (is_percentage & df[col].notna())
+                                df.loc[mask, col] = df.loc[mask, col].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
                             
                             # Add filing information
                             df["FilingDate"] = date_str
