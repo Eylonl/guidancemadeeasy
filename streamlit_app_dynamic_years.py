@@ -90,6 +90,22 @@ FISCAL_YEAR_CONFIG = {
             3: {'months': 1, 'days': 0},  # Q3 reported ~Oct 15 - Nov 15
             4: {'months': 1, 'days': 15}  # Q4 reported ~Jan 15 - Feb 15
         }
+    },
+    'ORCL': {
+        'fiscal_year_end_month': 5,  # May
+        'fiscal_year_end_day': 31,
+        'quarters': {
+            1: {'start_month': 6, 'end_month': 8},    # Q1: Jun-Aug
+            2: {'start_month': 9, 'end_month': 11},   # Q2: Sep-Nov
+            3: {'start_month': 12, 'end_month': 2},   # Q3: Dec-Feb
+            4: {'start_month': 3, 'end_month': 5}     # Q4: Mar-May
+        },
+        'earnings_report_offset': {
+            1: {'months': 1, 'days': 0},  # Q1 reported ~Sep 15 - Oct 15
+            2: {'months': 1, 'days': 0},  # Q2 reported ~Dec 15 - Jan 15
+            3: {'months': 1, 'days': 0},  # Q3 reported ~Mar 15 - Apr 15
+            4: {'months': 1, 'days': 0}   # Q4 reported ~Jun 15 - Jul 15
+        }
     }
     # Add more companies as needed
 }
@@ -141,46 +157,52 @@ def get_fiscal_dates(ticker, quarter_num, year_num):
     
     # Parse quarter configuration
     quarter_info = config['quarters'].get(quarter_num, {})
-    report_offset = config['earnings_report_offset'].get(quarter_num, {'months': 1, 'days': 0})
-    
-    # Determine if we need to adjust the calendar year based on fiscal year
-    fiscal_year_end_month = config['fiscal_year_end_month']
-    
-    # For companies with calendar fiscal year (ending in December)
-    if fiscal_year_end_month == 12:
-        # Q1: Jan-Mar of fiscal year
-        # Q2: Apr-Jun of fiscal year
-        # Q3: Jul-Sep of fiscal year
-        # Q4: Oct-Dec of fiscal year
-        calendar_year = year_num
-    else:
-        # For companies with non-calendar fiscal year (like TEAM ending in June)
-        # Q1: Jul-Sep of previous calendar year
-        # Q2: Oct-Dec of previous calendar year
-        # Q3: Jan-Mar of current calendar year
-        # Q4: Apr-Jun of current calendar year
-        
-        # If the quarter starts after the fiscal year end, it belongs to the next fiscal year
-        if quarter_info['start_month'] > fiscal_year_end_month:
-            # This is first part of fiscal year (e.g., Q1, Q2 for TEAM)
-            # For FY24, Q1 would be in calendar year 2023
-            calendar_year = year_num - 1
-        else:
-            # This is latter part of fiscal year (e.g., Q3, Q4 for TEAM)
-            # For FY24, Q4 would be in calendar year 2024
-            calendar_year = year_num
-    
-    # Calculate the quarter's actual start and end dates
     start_month = quarter_info['start_month']
     end_month = quarter_info['end_month']
+    fiscal_year_end_month = config['fiscal_year_end_month']
     
-    # Determine the exact dates for the quarter
-    start_date = datetime(calendar_year, start_month, 1)
+    # Show fiscal configuration information
+    st.write(f"Using fiscal configuration for {ticker}")
+    st.write(f"Fiscal year ends in month {fiscal_year_end_month} ({datetime(2000, fiscal_year_end_month, 1).strftime('%B')})")
+    st.write(f"Quarter {quarter_num} spans months {start_month}-{end_month} ({datetime(2000, start_month, 1).strftime('%B')}-{datetime(2000, end_month, 1).strftime('%B')})")
+    
+    # Determine the calendar year of the first month in this fiscal year
+    # For example, if FY2024 ends in May 2024, it starts in June 2023
+    fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
+    
+    # For FY2024:
+    # If fiscal year ends in May 2024 (month 5), fiscal year starts in June 2023 (month 6)
+    # If fiscal year ends in December 2024 (month 12), fiscal year starts in January 2024 (month 1)
+    
+    # Determine if the requested quarter's start month is in the first or second calendar year of the fiscal year
+    if start_month >= fiscal_year_start_month:
+        # First calendar year of fiscal year
+        # Example: For Oracle FY2024 (Jun 2023-May 2024), Q1 and Q2 start in 2023
+        start_calendar_year = year_num - 1
+    else:
+        # Second calendar year of fiscal year
+        # Example: For Oracle FY2024 (Jun 2023-May 2024), Q4 starts in 2024
+        start_calendar_year = year_num
+    
+    # For standard calendar year companies (fiscal year = calendar year)
+    if fiscal_year_end_month == 12:
+        # Simple case - just use the fiscal year directly
+        start_calendar_year = year_num
+    
+    # Calculate end date calendar year
+    end_calendar_year = start_calendar_year
+    if end_month < start_month:
+        # Quarter spans calendar years
+        # Example: Oracle Q3 FY2024: Dec 2023-Feb 2024
+        end_calendar_year = start_calendar_year + 1
+    
+    # Create actual date objects
+    start_date = datetime(start_calendar_year, start_month, 1)
     
     # Calculate end date (last day of the end month)
     if end_month == 2:
         # Handle February and leap years
-        if (calendar_year % 4 == 0 and calendar_year % 100 != 0) or (calendar_year % 400 == 0):
+        if (end_calendar_year % 4 == 0 and end_calendar_year % 100 != 0) or (end_calendar_year % 400 == 0):
             end_day = 29  # Leap year
         else:
             end_day = 28
@@ -189,7 +211,7 @@ def get_fiscal_dates(ticker, quarter_num, year_num):
     else:
         end_day = 31
     
-    end_date = datetime(calendar_year, end_month, end_day)
+    end_date = datetime(end_calendar_year, end_month, end_day)
     
     # Calculate expected earnings report dates (typically a few weeks after quarter end)
     report_start = end_date + timedelta(days=15)
@@ -199,6 +221,16 @@ def get_fiscal_dates(ticker, quarter_num, year_num):
     quarter_period = f"Q{quarter_num} FY{year_num}"
     period_description = f"{start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}"
     expected_report = f"~{report_start.strftime('%B %d, %Y')} to {report_end.strftime('%B %d, %Y')}"
+    
+    return {
+        'quarter_period': quarter_period,
+        'start_date': start_date,
+        'end_date': end_date,
+        'report_start': report_start,
+        'report_end': report_end,
+        'period_description': period_description,
+        'expected_report': expected_report
+    }
     
     return {
         'quarter_period': quarter_period,
