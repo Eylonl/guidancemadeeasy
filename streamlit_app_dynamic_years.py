@@ -300,21 +300,8 @@ if st.button("🔍 Extract Guidance"):
                 st.subheader("Extracted Guidance")
                 st.dataframe(combined)
                 
-                # Provide download options
+                # CSV download only
                 import io
-                
-                # Excel download
-                excel_buffer = io.BytesIO()
-                combined.to_excel(excel_buffer, index=False)
-                excel_buffer.seek(0)
-                st.download_button(
-                    "📥 Download Excel", 
-                    data=excel_buffer.getvalue(), 
-                    file_name=f"{ticker}_guidance_output.xlsx", 
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-                # CSV download
                 csv_buffer = io.BytesIO()
                 combined.to_csv(csv_buffer, index=False)
                 csv_buffer.seek(0)
@@ -322,8 +309,7 @@ if st.button("🔍 Extract Guidance"):
                     "📥 Download CSV",
                     data=csv_buffer.getvalue(),
                     file_name=f"{ticker}_guidance_output.csv",
-                    mime="text/csv",
-                    key="csv-download"
+                    mime="text/csv"
                 )
             else:
                 st.warning("No guidance data extracted.")
