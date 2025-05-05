@@ -123,6 +123,7 @@ Return a structured list containing:
 VERY IMPORTANT: For any percentage values, always include the % symbol in your output:
 - If the guidance mentions "operating margin of 5 to 7 percent", output it as "5% to 7%" or "5%-7%"
 - If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
+- Preserve any descriptive text like "Approximately" or "Around" in your output
 
 Respond in table format without commentary.\n\n{text}"""
     try:
@@ -137,12 +138,12 @@ Respond in table format without commentary.\n\n{text}"""
 
 
 
-def split_gaap_non_gaap(df):
+def split_gaap_non_gaap(df, original_values):
     if 'Value' not in df.columns or 'Metric' not in df.columns:
         return df  # Avoid crash if column names are missing
 
     rows = []
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         val = str(row['Value'])
         match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
         if match:
@@ -156,8 +157,26 @@ def split_gaap_non_gaap(df):
                 new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
                 rows.append(new_row)
         else:
-            rows.append(row)
-    return pd.DataFrame(rows)
+            # Keep the original row, but ensure it has Low, High, Average columns
+            new_row = row.copy()
+            lo, hi, avg = parse_value_range(val)
+            new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
+            rows.append(new_row)
+    
+    result_df = pd.DataFrame(rows)
+    
+    # Restore original Value column from the dictionary
+    for idx, row in result_df.iterrows():
+        metric = row['Metric']
+        if ' (GAAP)' in metric or ' (Non-GAAP)' in metric:
+            # Skip the split rows
+            continue
+        
+        # For original rows, restore the exact Value text
+        if idx < len(original_values):
+            result_df.at[idx, 'Value'] = original_values[idx]
+    
+    return result_df
 
 
 if st.button("🔍 Extract Guidance"):
@@ -195,24 +214,22 @@ if st.button("🔍 Extract Guidance"):
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                         
+                        # Store original values to preserve them
+                        original_values = df[df.columns[1]].copy().tolist()
+                        
                         # Store which rows have percentages in the Value column
                         percentage_rows = {}
                         for idx, row in df.iterrows():
                             if '%' in str(row[df.columns[1]]):
                                 percentage_rows[idx] = True
                         
-                        # Parse low, high, and average from Value column
-                        value_col = df.columns[1]
-                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                        
                         # Apply GAAP/non-GAAP split
-                        df = split_gaap_non_gaap(df)
+                        df = split_gaap_non_gaap(df, original_values)
                         
                         # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                        for idx in df.index:
-                            # Check if this is a percentage row
-                            if idx in percentage_rows:
-                                # Add % to Low, High, Average columns
+                        for idx in percentage_rows.keys():
+                            # Add % to Low, High, Average columns for rows that had % in Value
+                            if idx < len(df):
                                 for col in ['Low', 'High', 'Average']:
                                     if col in df.columns and pd.notnull(df.loc[idx, col]):
                                         # Check if it's a number and doesn't already have %
