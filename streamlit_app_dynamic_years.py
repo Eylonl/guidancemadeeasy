@@ -780,4 +780,197 @@ Respond in table format without commentary.\n\n{text}"""
         )
         return response.choices[0].message.content
     except Exception as e:
-        st.warning(f
+        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
+        return None
+
+
+def split_gaap_non_gaap(df):
+    if 'Value' not in df.columns or 'Metric' not in df.columns:
+        return df  # Avoid crash if column names are missing
+
+    rows = []
+    for _, row in df.iterrows():
+        val = str(row['Value'])
+        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
+        if match:
+            gaap_val = match.group(1).strip() + " GAAP"
+            non_gaap_val = match.group(2).strip() + " non-GAAP"
+            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
+                new_row = row.copy()
+                new_row["Value"] = new_val
+                new_row["Metric"] = f"{row['Metric']} ({label})"
+                lo, hi, avg = parse_value_range(new_val)
+                new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
+                rows.append(new_row)
+        else:
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+if st.button("🔍 Extract Guidance"):
+    if not api_key:
+        st.error("Please enter your OpenAI API key.")
+    else:
+        cik = lookup_cik(ticker)
+        if not cik:
+            st.error("CIK not found for ticker.")
+        else:
+            client = OpenAI(api_key=api_key)
+            
+            # Store the ticker for later use
+            st.session_state['ticker'] = ticker
+            
+            # Handle different filtering options
+            if quarter_input.strip():
+                # Quarter input takes precedence
+                accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
+                if not accessions:
+                    st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
+            elif year_input.strip():
+                try:
+                    years_back = int(year_input.strip())
+                    accessions = get_accessions(cik, ticker, years_back=years_back)
+                except:
+                    st.error("Invalid year input. Must be a number.")
+                    accessions = []
+            else:
+                # Default to most recent if neither input is provided
+                accessions = get_accessions(cik, ticker)
+
+            links = get_ex99_1_links(cik, accessions)
+            results = []
+
+            for date_str, acc, url in links:
+                st.write(f"📄 Processing {url}")
+                try:
+                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    # Extract text while preserving structure
+                    text = soup.get_text(" ", strip=True)
+                    
+                    # Find paragraphs containing guidance patterns
+                    guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
+                    
+                    # Check if we found any guidance paragraphs
+                    if found_guidance:
+                        st.success(f"✅ Found potential guidance information.")
+                        
+                        # Extract guidance from the highlighted text
+                        table = extract_guidance(guidance_paragraphs, ticker, client)
+                    else:
+                        st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
+                        # Use a sample of the document to reduce token usage
+                        sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                        sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
+                        table = extract_guidance(sample_text, ticker, client)
+                    
+                    if table and "|" in table:
+                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                        if len(rows) > 1:  # Check if we have header and at least one row of data
+                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                            
+                            # Store which rows have percentages in the Value column
+                            percentage_rows = []
+                            for idx, row in df.iterrows():
+                                if '%' in str(row[df.columns[1]]):
+                                    percentage_rows.append(idx)
+                            
+                            # Parse low, high, and average from Value column
+                            value_col = df.columns[1]
+                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                            
+                            # Apply GAAP/non-GAAP split
+                            df = split_gaap_non_gaap(df)
+                            
+                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                            for idx in df.index:
+                                # Check if the original row had a percentage
+                                if idx in percentage_rows:
+                                    # Add % to Low, High, Average columns
+                                    for col in ['Low', 'High', 'Average']:
+                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                            df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                            
+                            # Apply consistency checks to fix any issues with negative ranges
+                            df = check_range_consistency(df)
+                            
+                            # Check for potential issues and missing data
+                            for idx, row in df.iterrows():
+                                # For metrics known to usually be negative (Loss, Decrease, etc.)
+                                if any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease']):
+                                    # Check if values should be negative
+                                    for col in ['Low', 'High', 'Average']:
+                                        if col in df.columns and row.get(col) is not None:
+                                            val = row[col]
+                                            if isinstance(val, (int, float)) and val > 0:
+                                                # If it's positive but should be negative, fix it
+                                                df.at[idx, col] = -abs(val)
+                                            elif isinstance(val, str) and val.replace('$', '').replace('%', '').strip().startswith('-') == False:
+                                                # Remove any $ or % for conversion
+                                                clean_val = val.replace('$', '').replace('%', '').strip()
+                                                try:
+                                                    num_val = float(clean_val)
+                                                    # Reformat with negative sign
+                                                    if '%' in val:
+                                                        df.at[idx, col] = f"-{abs(num_val):.1f}%"
+                                                    elif '$' in val:
+                                                        df.at[idx, col] = f"-${abs(num_val):.2f}"
+                                                except:
+                                                    pass
+                            
+                            df["FilingDate"] = date_str
+                            df["8K_Link"] = url
+                            results.append(df)
+                            st.success("✅ Guidance extracted from this 8-K.")
+                        else:
+                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
+                            
+                            # Show a sample of the text to help debug
+                            st.write("Sample of text sent to OpenAI:")
+                            sample_length = min(500, len(guidance_paragraphs))
+                            st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                    else:
+                        st.warning(f"⚠️ No guidance table found in {url}")
+                        
+                        # Show a sample of the text to help debug
+                        st.write("Sample of text sent to OpenAI:")
+                        sample_length = min(500, len(guidance_paragraphs))
+                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                except Exception as e:
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
+
+            if results:
+                combined = pd.concat(results, ignore_index=True)
+                
+                # Preview the table
+                st.subheader("🔍 Preview of Extracted Guidance")
+                
+                # Select the most relevant columns for display
+                display_cols = ["Metric", "Value", "Period", "Low", "High", "Average", "FilingDate"]
+                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
+                
+                # Apply custom formatting when displaying
+                # Convert numeric columns to appropriate string formats
+                for col in ['Low', 'High', 'Average']:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(
+                            lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
+                                      any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
+                                      else format_dollar(x) if isinstance(x, (int, float)) and 
+                                      any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
+                                      else x)
+                        )
+                
+                # Display the table with formatting
+                st.dataframe(display_df, use_container_width=True)
+                
+                # Add download button
+                import io
+                excel_buffer = io.BytesIO()
+                combined.to_excel(excel_buffer, index=False)
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("No guidance data extracted.")
+                   
