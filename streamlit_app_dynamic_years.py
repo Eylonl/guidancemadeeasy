@@ -469,11 +469,7 @@ VERY IMPORTANT:
 - Look for common financial metrics: Revenue, EPS, Operating Margin, Free Cash Flow, Gross Margin, etc.
 - Include both quarterly and full-year guidance if available
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
-
-IMPORTANT: FOR THE "VALUE" COLUMN:
-- Keep all values in their original format exactly as stated in the document
-- Do NOT convert billion values to millions in the "value" column
-- For example, if the document says "$1.10-$1.11 billion", output exactly "$1.10-$1.11 billion" in the value column
+- For the value column, keep all values in their original format as stated in the document (don't convert billion to million)
 
 IMPORTANT FORMATTING INSTRUCTIONS:
 - For dollar ranges, use the format "$X-$Y" (with dollar sign before each number)
