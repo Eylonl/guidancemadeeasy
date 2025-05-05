@@ -61,10 +61,7 @@ st.title("📄 SEC 8-K Guidance Extractor")
 # Inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
-
-quarter = st.selectbox("Select Quarter", ["Q1", "Q2", "Q3", "Q4"])
-fiscal_year = st.text_input("Enter Fiscal Year (e.g., 2024)", "")
-
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
 
 
 @st.cache_data(show_spinner=False)
@@ -160,28 +157,38 @@ def split_gaap_non_gaap(df):
 
 
 if st.button("🔍 Extract Guidance"):
-    
-
-    
-
-        if not api_key:
-            st.error("Please enter your OpenAI API key.")
+    if not api_key:
+        st.error("Please enter your OpenAI API key.")
     else:
         cik = lookup_cik(ticker)
         if not cik:
             st.error("CIK not found for ticker.")
         else:
             client = OpenAI(api_key=api_key)
-            
-            
+            if year_input.strip():
+    if re.match(r'\dQ\d{2,4}', year_input.upper()):  # Example: 1Q25, 3Q2024
+        period = year_input.upper()
+        all_recent = get_accessions(cik, 10)
+        accessions = []
+        for acc, date_str in all_recent:
+            if period in acc or period in date_str.replace("-", ""):
+                accessions.append((acc, date_str))
+        if not accessions:
+            st.warning(f"No filings found for period {period}")
+    else:
+        try:
+            years_back = int(year_input)
+            accessions = get_accessions(cik, years_back)
+        except:
+            st.error("Invalid year input. Must be a number or quarter (e.g., 1Q25).")
+            accessions = []
+            else:
+                accessions = get_most_recent_accession(cik)
+
+            links = get_ex99_1_links(cik, accessions)
             results = []
 
             for date_str, acc, url in links:
-        # Debug: show matching filenames before processing
-        if debug_filenames:
-            st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
-            for fname in debug_filenames:
-                st.text(f"📄 Found filename: {fname}")
                 st.write(f"📄 Processing {url}")
                 try:
                     html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
