@@ -161,12 +161,8 @@ def split_gaap_non_gaap(df):
 
 if st.button("🔍 Extract Guidance"):
     
-            for fname in debug_filenames:
-                for fname in debug_filenames:
 
     
-            for fname in debug_filenames:
-                for fname in debug_filenames:
 
             if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -181,6 +177,7 @@ if st.button("🔍 Extract Guidance"):
             results = []
 
             for date_str, acc, url in links:
+        # Debug: show matching filenames before processing
         if debug_filenames:
             st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
             for fname in debug_filenames:
