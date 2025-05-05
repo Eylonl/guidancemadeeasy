@@ -38,6 +38,7 @@ def format_percent(val):
     return val
 
 def parse_value_range(text: str):
+    is_percent = "%" in text or "percent" in text.lower()
     if not isinstance(text, str):
         return (None, None, None)
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
