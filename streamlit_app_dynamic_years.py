@@ -76,13 +76,76 @@ def lookup_cik(ticker):
             return str(entry["cik_str"]).zfill(10)
 
 
-def get_accessions(cik, years_back=None, specific_quarter=None):
+def get_team_accessions_for_quarter(cik, quarter_num, year_num):
+    """
+    Special function specifically for finding TEAM filings for a given fiscal quarter
+    """
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     resp = requests.get(url, headers=headers)
     data = resp.json()
     filings = data["filings"]["recent"]
     accessions = []
+    
+    # For TEAM's Q2 FY25 specifically, we know it was reported on January 30, 2025
+    if quarter_num == 2 and year_num == 2025:
+        target_date = "2025-01-30"
+        st.write(f"Looking for TEAM Q2 FY25 earnings report (reported on {target_date})")
+        
+        # Look for filings on or around January 30, 2025
+        start_date = datetime(2025, 1, 15)  # Buffer before
+        end_date = datetime(2025, 2, 15)    # Buffer after
+        
+        for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+            if form == "8-K":
+                date = datetime.strptime(date_str, "%Y-%m-%d")
+                if start_date <= date <= end_date:
+                    accessions.append((accession, date_str))
+                    st.write(f"Found filing from {date_str}: {accession}")
+    
+    # For other TEAM quarters, use the general pattern
+    elif quarter_num == 1:  # Q1 typically reported in October-November
+        start_date = datetime(year_num - 1, 10, 1)
+        end_date = datetime(year_num - 1, 11, 30)
+    elif quarter_num == 2:  # Q2 typically reported in January-February
+        start_date = datetime(year_num, 1, 1)
+        end_date = datetime(year_num, 2, 28)
+    elif quarter_num == 3:  # Q3 typically reported in April-May
+        start_date = datetime(year_num, 4, 1)
+        end_date = datetime(year_num, 5, 31)
+    else:  # Q4 typically reported in July-August
+        start_date = datetime(year_num, 7, 1)
+        end_date = datetime(year_num, 8, 31)
+    
+    # Add buffer periods
+    start_date = start_date - timedelta(days=15)
+    end_date = end_date + timedelta(days=15)
+    
+    st.write(f"Looking for TEAM Q{quarter_num} FY{year_num} earnings filings")
+    st.write(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+    
+    # Find filings in this date range
+    for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+        if form == "8-K":
+            date = datetime.strptime(date_str, "%Y-%m-%d")
+            if start_date <= date <= end_date:
+                accessions.append((accession, date_str))
+                st.write(f"Found filing from {date_str}: {accession}")
+    
+    return accessions
+
+
+def get_accessions(cik, years_back=None, specific_quarter=None):
+    """General function for finding filings"""
+    headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+    resp = requests.get(url, headers=headers)
+    data = resp.json()
+    filings = data["filings"]["recent"]
+    accessions = []
+    
+    # Get ticker from session state
+    ticker = st.session_state.get('ticker', '').upper()
     
     if years_back:
         cutoff = datetime.today() - timedelta(days=365 * years_back)
@@ -93,8 +156,8 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
                 if date >= cutoff:
                     accessions.append((accession, date_str))
     
-    elif specific_quarter:
-        # Parse quarter and year from input format like "2Q25" or "Q2FY24"
+    elif specific_quarter and ticker == 'TEAM':
+        # Parse quarter and year from input
         match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:FY)?(\d{2}|\d{4})', specific_quarter.upper())
         if match:
             quarter = match.group(1) or match.group(2)
@@ -107,56 +170,62 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
             quarter_num = int(quarter)
             year_num = int(year)
             
-            # Determine date ranges for the specified quarter
-            # Fiscal quarters can vary by company, but we'll use calendar quarters as default
-            # Q1: Jan-Mar, Q2: Apr-Jun, Q3: Jul-Sep, Q4: Oct-Dec
-            quarter_start_months = {1: 1, 2: 4, 3: 7, 4: 10}
-            quarter_end_months = {1: 3, 2: 6, 3: 9, 4: 12}
+            # Use special TEAM-specific function
+            return get_team_accessions_for_quarter(cik, quarter_num, year_num)
+    
+    elif specific_quarter:
+        # For non-TEAM tickers, use general calendar quarters
+        match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:FY)?(\d{2}|\d{4})', specific_quarter.upper())
+        if match:
+            quarter = match.group(1) or match.group(2)
+            year = match.group(3)
             
-            start_date = datetime(year_num, quarter_start_months[quarter_num], 1)
-            end_month = quarter_end_months[quarter_num]
-            if end_month == 12:
-                end_date = datetime(year_num, end_month, 31)
-            elif end_month in [4, 6, 9, 11]:
-                end_date = datetime(year_num, end_month, 30)
-            else:  # February
+            # Convert 2-digit year to 4-digit year
+            if len(year) == 2:
+                year = '20' + year
+                
+            quarter_num = int(quarter)
+            year_num = int(year)
+            
+            # Default calendar quarters
+            if quarter_num == 1:
+                start_month, end_month = 1, 3  # Jan-Mar
+            elif quarter_num == 2:
+                start_month, end_month = 4, 6  # Apr-Jun
+            elif quarter_num == 3:
+                start_month, end_month = 7, 9  # Jul-Sep
+            elif quarter_num == 4:
+                start_month, end_month = 10, 12  # Oct-Dec
+            
+            start_date = datetime(year_num, start_month, 1)
+            
+            # Set the correct end day based on the month
+            if end_month == 2:
+                # Handle February and leap years
                 if (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0):
-                    end_date = datetime(year_num, end_month, 29)  # Leap year
+                    end_day = 29  # Leap year
                 else:
-                    end_date = datetime(year_num, end_month, 28)
+                    end_day = 28
+            elif end_month in [4, 6, 9, 11]:
+                end_day = 30
+            else:
+                end_day = 31
+                
+            end_date = datetime(year_num, end_month, end_day)
             
-            # Add a buffer period after quarter end for earnings releases (typically 1-2 months)
+            # Add a buffer period after quarter end for earnings releases
             end_date = end_date + timedelta(days=60)
             
-            st.write(f"Looking for filings related to Quarter {quarter_num} of {year_num}")
+            st.write(f"Looking for Calendar Quarter {quarter_num} of {year_num}")
             st.write(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
             
-            # For debugging purposes, show the available filings
-            quarter_filings = []
+            # Find filings in this date range
             for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
                 if form == "8-K":
                     date = datetime.strptime(date_str, "%Y-%m-%d")
                     if start_date <= date <= end_date:
-                        quarter_filings.append((date_str, accession))
-            
-            if not quarter_filings:
-                st.warning(f"No 8-K filings found within the date range for {specific_quarter}")
-                
-                # Show available dates for reference
-                available_dates = []
-                for form, date_str in zip(filings["form"], filings["filingDate"]):
-                    if form == "8-K":
-                        available_dates.append(date_str)
-                
-                if available_dates:
-                    st.write("Available 8-K filing dates:")
-                    for date in available_dates[:10]:  # Show only the first 10 to avoid cluttering
-                        st.write(f"- {date}")
-                    if len(available_dates) > 10:
-                        st.write(f"... and {len(available_dates) - 10} more")
-            
-            # Add the filings to the accessions list
-            accessions.extend(quarter_filings)
+                        accessions.append((accession, date_str))
+                        st.write(f"Found filing from {date_str}: {accession}")
     
     else:  # Default: most recent only
         for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
@@ -167,12 +236,21 @@ def get_accessions(cik, years_back=None, specific_quarter=None):
     # Show debug info about the selected accessions
     if accessions:
         st.write(f"Found {len(accessions)} relevant 8-K filings")
+    else:
+        # Show all available dates for reference
+        available_dates = []
+        for form, date_str in zip(filings["form"], filings["filingDate"]):
+            if form == "8-K":
+                available_dates.append(date_str)
+        
+        if available_dates:
+            available_dates.sort(reverse=True)  # Show most recent first
+            st.write("All available 8-K filing dates:")
+            for date in available_dates:
+                st.write(f"- {date}")
     
     return accessions
 
-def get_most_recent_accession(cik):
-    all_recent = get_accessions(cik)
-    return all_recent[:1] if all_recent else []
 
 def get_ex99_1_links(cik, accessions):
     links = []
@@ -192,6 +270,7 @@ def get_ex99_1_links(cik, accessions):
                     links.append((date_str, accession, base_folder + filename))
                     break
     return links
+
 
 def extract_guidance(text, ticker, client):
     prompt = f"""You are a financial analyst assistant. Extract all forward-looking guidance given in this earnings release for {ticker}. 
@@ -254,17 +333,16 @@ if st.button("🔍 Extract Guidance"):
         else:
             client = OpenAI(api_key=api_key)
             
-            # Store the ticker for later use by the get_accessions function
+            # Store the ticker for later use
             st.session_state['ticker'] = ticker
             
             # Handle different filtering options
             if quarter_input.strip():
-                # Quarter input takes precedence over other options, including blank years_back
+                # Quarter input takes precedence
                 accessions = get_accessions(cik, specific_quarter=quarter_input.strip())
                 if not accessions:
                     st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
             elif year_input.strip():
-                # Only use years_back if quarter is not specified
                 try:
                     years_back = int(year_input.strip())
                     accessions = get_accessions(cik, years_back=years_back)
@@ -273,7 +351,7 @@ if st.button("🔍 Extract Guidance"):
                     accessions = []
             else:
                 # Default to most recent if neither input is provided
-                accessions = get_most_recent_accession(cik)
+                accessions = get_accessions(cik)
 
             links = get_ex99_1_links(cik, accessions)
             results = []
