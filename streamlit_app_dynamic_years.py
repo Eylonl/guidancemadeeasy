@@ -165,28 +165,34 @@ if st.button("🔍 Extract Guidance"):
             st.error("CIK not found for ticker.")
         else:
             client = OpenAI(api_key=api_key)
+            accessions = []
             if year_input.strip():
                 if re.match(r'\dQ\d{2,4}', year_input.upper()):
-                    period = year_input.upper()
+                    target = year_input.upper()
                     all_recent = get_accessions(cik, 10)
-                    accessions = []
                     for acc, date_str in all_recent:
-                        if period in acc or period in date_str.replace("-", ""):
-                            accessions.append((acc, date_str))
+                        links = get_ex99_1_links(cik, [(acc, date_str)])
+                        for _, _, url in links:
+                            try:
+                                html = requests.get(url, headers={"User-Agent": "DataResearchBot Contact@example.com"}).text
+                                text = BeautifulSoup(html, "html.parser").get_text()
+                                normalized = text.upper().replace("FISCAL YEAR ", "FY").replace("QUARTER", "Q")
+                                if target in normalized:
+                                    accessions.append((acc, date_str))
+                            except:
+                                continue
                     if not accessions:
-                        st.warning(f"No filings found for period {period}")
+                        st.warning(f"No filings found mentioning {target} in document text.")
                 else:
                     try:
                         years_back = int(year_input)
                         accessions = get_accessions(cik, years_back)
                     except:
                         st.error("Invalid year input. Must be a number or quarter (e.g., 1Q25).")
-                        accessions = []
             else:
                 accessions = get_most_recent_accession(cik)
             links = get_ex99_1_links(cik, accessions)
             results = []
-
             for date_str, acc, url in links:
                 st.write(f"📄 Processing {url}")
                 try:
@@ -199,9 +205,7 @@ if st.button("🔍 Extract Guidance"):
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                        # parse low, high, and average from Value column
-                        value_col = df.columns[1]
-                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                        df[['Low', 'High', 'Average']] = df["Value"].apply(lambda v: pd.Series(parse_value_range(v)))
                         df = split_gaap_non_gaap(df)
                         df["FilingDate"] = date_str
                         df["8K_Link"] = url
@@ -211,7 +215,6 @@ if st.button("🔍 Extract Guidance"):
                         st.warning("⚠️ Skipped, no guidance found in filing.")
                 except:
                     st.warning(f"Could not process: {url}")
-
             if results:
                 combined = pd.concat(results, ignore_index=True)
                 import io
