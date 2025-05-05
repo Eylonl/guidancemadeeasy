@@ -60,7 +60,16 @@ st.title("📄 SEC 8-K Guidance Extractor")
 # Inputs
 ticker = st.text_input("Enter Stock Ticker (e.g., TEAM)", "TEAM").upper()
 api_key = st.text_input("Enter OpenAI API Key", type="password")
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+
+# Add filter selection
+filter_type = st.radio("Filter by:", ["Years Back", "Specific Quarter"])
+
+if filter_type == "Years Back":
+    year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+    quarter_input = None
+else:  # Specific Quarter
+    quarter_input = st.text_input("Enter specific quarter (e.g., 3Q25, Q4FY24)", "")
+    year_input = None
 
 
 @st.cache_data(show_spinner=False)
@@ -73,24 +82,74 @@ def lookup_cik(ticker):
             return str(entry["cik_str"]).zfill(10)
 
 
-def get_accessions(cik, years_back):
+def get_accessions(cik, years_back=None, specific_quarter=None):
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     resp = requests.get(url, headers=headers)
     data = resp.json()
     filings = data["filings"]["recent"]
     accessions = []
-    cutoff = datetime.today() - timedelta(days=365 * years_back)
-
-    for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
-        if form == "8-K":
-            date = datetime.strptime(date_str, "%Y-%m-%d")
-            if date >= cutoff:
+    
+    if years_back:
+        cutoff = datetime.today() - timedelta(days=365 * years_back)
+        
+        for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+            if form == "8-K":
+                date = datetime.strptime(date_str, "%Y-%m-%d")
+                if date >= cutoff:
+                    accessions.append((accession, date_str))
+    
+    elif specific_quarter:
+        # Parse quarter and year from input format like "3Q25" or "Q4FY24"
+        match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:FY)?(\d{2}|\d{4})', specific_quarter.upper())
+        if match:
+            quarter = match.group(1) or match.group(2)
+            year = match.group(3)
+            
+            # Convert 2-digit year to 4-digit year
+            if len(year) == 2:
+                year = '20' + year
+                
+            quarter_num = int(quarter)
+            year_num = int(year)
+            
+            # Determine date ranges for the specified quarter
+            # Fiscal quarters can vary by company, but we'll use calendar quarters as default
+            # Q1: Jan-Mar, Q2: Apr-Jun, Q3: Jul-Sep, Q4: Oct-Dec
+            quarter_start_months = {1: 1, 2: 4, 3: 7, 4: 10}
+            quarter_end_months = {1: 3, 2: 6, 3: 9, 4: 12}
+            
+            start_date = datetime(year_num, quarter_start_months[quarter_num], 1)
+            end_month = quarter_end_months[quarter_num]
+            if end_month == 12:
+                end_date = datetime(year_num, end_month, 31)
+            elif end_month in [4, 6, 9, 11]:
+                end_date = datetime(year_num, end_month, 30)
+            else:  # February
+                if (year_num % 4 == 0 and year_num % 100 != 0) or (year_num % 400 == 0):
+                    end_date = datetime(year_num, end_month, 29)  # Leap year
+                else:
+                    end_date = datetime(year_num, end_month, 28)
+            
+            # Add a buffer period after quarter end for earnings releases (typically 1-2 months)
+            end_date = end_date + timedelta(days=60)
+            
+            for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+                if form == "8-K":
+                    date = datetime.strptime(date_str, "%Y-%m-%d")
+                    if start_date <= date <= end_date:
+                        accessions.append((accession, date_str))
+    
+    else:  # Default: most recent only
+        for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+            if form == "8-K":
                 accessions.append((accession, date_str))
+                break
+    
     return accessions
 
 def get_most_recent_accession(cik):
-    all_recent = get_accessions(cik, 10)
+    all_recent = get_accessions(cik)
     return all_recent[:1] if all_recent else []
 
 def get_ex99_1_links(cik, accessions):
@@ -169,15 +228,26 @@ if st.button("🔍 Extract Guidance"):
             st.error("CIK not found for ticker.")
         else:
             client = OpenAI(api_key=api_key)
-            if year_input.strip():
-                try:
-                    years_back = int(year_input.strip())
-                    accessions = get_accessions(cik, years_back)
-                except:
-                    st.error("Invalid year input. Must be a number.")
+            
+            # Handle different filtering options
+            if filter_type == "Years Back":
+                if year_input.strip():
+                    try:
+                        years_back = int(year_input.strip())
+                        accessions = get_accessions(cik, years_back=years_back)
+                    except:
+                        st.error("Invalid year input. Must be a number.")
+                        accessions = []
+                else:
+                    accessions = get_most_recent_accession(cik)
+            else:  # Specific Quarter
+                if quarter_input.strip():
+                    accessions = get_accessions(cik, specific_quarter=quarter_input.strip())
+                    if not accessions:
+                        st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 3Q25, Q4FY24).")
+                else:
+                    st.error("Please enter a specific quarter (e.g., 3Q25, Q4FY24).")
                     accessions = []
-            else:
-                accessions = get_most_recent_accession(cik)
 
             links = get_ex99_1_links(cik, accessions)
             results = []
