@@ -395,6 +395,7 @@ if st.button("🔍 Extract Guidance"):
             if results:
                 try:
                     combined = pd.concat(results, ignore_index=True)
+                    combined['Period'] = combined['Period'].apply(lambda x: normalise_period(str(x)) or x)
                     
                     # Display the table in the app
                     st.subheader("Extracted Guidance")
@@ -482,3 +483,120 @@ def parse_value_range(text: str) -> Dict[str, Optional[float]]:
     value = extract_number(m.group(0)) if m else None
     return {"low": value, "high": value, "avg": value}
 # ──────────────────────────────────────────────────────────────────────
+
+# ===== Added helper functions for number parsing and period normalisation =====
+from typing import Optional, Tuple
+
+_ORDINAL_TO_Q = {
+    "first": "Q1",
+    "second": "Q2",
+    "third": "Q3",
+    "fourth": "Q4",
+}
+
+def normalise_period(txt: str) -> Optional[str]:
+    """Return standardized period name like 'Q1 FY25' or 'FY25'.
+    Returns None if not recognised.
+    """
+    if not txt:
+        return None
+    text = txt.strip().lower()
+
+    # Qx FYyyyy
+    m = re.search(r'(q[1-4])\s*fy\s*(\d{2,4})', text)
+    if m:
+        q, yr = m.groups()
+        return f"{q.upper()} FY{yr[-2:]}"
+
+    # written-out quarter
+    m = re.search(r'(first|second|third|fourth)\s+quarter\s+fiscal\s+year\s+(\d{4})', text)
+    if m:
+        ord_word, yr = m.groups()
+        return f"{_ORDINAL_TO_Q[ord_word]} FY{yr[-2:]}"    
+
+    # fiscal year
+    m = re.search(r'fiscal\s+year\s+(\d{4})', text)
+    if m:
+        yr = m.group(1)
+        return f"FY{yr[-2:]}"
+
+    # full year xxxx
+    m = re.search(r'full\s+year\s+(\d{4})', text)
+    if m:
+        yr = m.group(1)
+        return f"FY{yr[-2:]}"
+
+    return None
+
+
+def extract_number(token: str) -> Optional[float]:
+    """
+    Parse a token like '$1,085 million', '2.3B', '(900K)' and return a float **in millions**.
+    Returns None if the token cannot be parsed.
+    """
+    if not token:
+        return None
+
+    # Check for wrapped negative numbers: (1.2M)
+    neg = token.strip().startswith('(') and token.strip().endswith(')')
+    token = token.replace('(', '').replace(')', '')
+
+    token = token.replace('$', '').replace(',', '').strip().lower()
+
+    factor = 1.0  # default token already in millions
+    if token.endswith('billion'):
+        token = token[:-7].strip()
+        factor = 1000        # 1 billion = 1000 million
+    elif token.endswith('million'):
+        token = token[:-7].strip()
+        factor = 1
+    elif token.endswith('k'):
+        token = token[:-1].strip()
+        factor = 0.001
+    elif token.endswith('m'):
+        token = token[:-1].strip()
+        factor = 1
+    elif token.endswith('b'):
+        token = token[:-1].strip()
+        factor = 1000
+
+    # remove any trailing percentage sign, though Value shouldn't include it
+    token = token.replace('%','')
+
+    try:
+        val = float(token) * factor
+        return -val if neg else val
+    except ValueError:
+        return None
+
+
+number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
+
+def parse_value_range(text: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """Return (low, high, average) from a snippet of guidance text.
+    All numbers are normalised to **millions**.
+    """
+    if not text or not isinstance(text, str):
+        return None, None, None
+
+    text = text.strip()
+
+    # Detect "flat" or "unchanged"
+    if re.search(r'\b(flat|unchanged)\b', text, re.I):
+        return 0.0, 0.0, 0.0
+
+    # Look for range A to B or A – B
+    rng = re.search(rf'({number_token})(?:\s*(?:[-–—~]|to)\s*)({number_token})', text, re.I)
+    if rng:
+        low = extract_number(rng.group(1))
+        high = extract_number(rng.group(2))
+        avg = (low + high) / 2 if low is not None and high is not None else None
+        return low, high, avg
+
+    # Fallback single value
+    single = re.search(number_token, text, re.I)
+    if single:
+        val = extract_number(single.group(0))
+        return val, val, val
+
+    return None, None, None
