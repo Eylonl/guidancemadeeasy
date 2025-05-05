@@ -364,10 +364,91 @@ def get_ex99_1_links(cik, accessions):
     return links
 
 
+def find_guidance_paragraphs(text):
+    """
+    Extract paragraphs from text that are likely to contain guidance information.
+    Returns both the filtered paragraphs and a boolean indicating if any were found.
+    """
+    # Define patterns to identify guidance sections
+    guidance_patterns = [
+        r'(?i)outlook',
+        r'(?i)guidance',
+        r'(?i)financial outlook',
+        r'(?i)business outlook',
+        r'(?i)forward[\s-]*looking',
+        r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
+        r'(?i)(?:we|company) expect(?:s)?',
+        r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
+        r'(?i)to be (?:in the range of|approximately)',
+        r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
+        r'(?i)growth of (?:approximately|about)',
+        r'(?i)for (?:fiscal|the fiscal)',
+        r'(?i)next quarter',
+        r'(?i)full year',
+        r'(?i)current quarter',
+        r'(?i)future quarter',
+        r'(?i)Q[1-4]'
+    ]
+    
+    # Split text into paragraphs
+    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+    
+    # Find paragraphs matching guidance patterns
+    guidance_paragraphs = []
+    
+    for para in paragraphs:
+        if any(re.search(pattern, para) for pattern in guidance_patterns):
+            # Check if it's likely a forward-looking statement (not a disclaimer)
+            if not (re.search(r'(?i)safe harbor', para) or 
+                    (re.search(r'(?i)forward-looking statements', para) and 
+                     re.search(r'(?i)risks', para))):
+                guidance_paragraphs.append(para)
+    
+    # Check if we found any guidance paragraphs
+    found_paragraphs = len(guidance_paragraphs) > 0
+    
+    # If no guidance paragraphs found, get a small sample of the document
+    if not found_paragraphs:
+        # Extract a small sample from sections that might contain guidance
+        for section_name in ["outlook", "guidance", "forward", "future", "expect", "anticipate"]:
+            section_pattern = re.compile(fr'(?i)(?:^|\n|\. )([^.]*{section_name}[^.]*\. [^.]*\. [^.]*\.)', re.MULTILINE)
+            matches = section_pattern.findall(text)
+            for match in matches:
+                if len(match.strip()) > 50:  # Ensure it's not just a brief mention
+                    guidance_paragraphs.append(match.strip())
+    
+    # If still no paragraphs found, get first few paragraphs and any with financial terms
+    if not guidance_paragraphs:
+        # Add first few paragraphs (might contain summary of results including guidance)
+        first_few = paragraphs[:5] if len(paragraphs) > 5 else paragraphs
+        guidance_paragraphs.extend([p for p in first_few if len(p.strip()) > 100])
+        
+        # Add paragraphs with financial terms
+        financial_terms = ["revenue", "earnings", "eps", "income", "margin", "growth", "forecast"]
+        for para in paragraphs:
+            if any(term in para.lower() for term in financial_terms) and para not in guidance_paragraphs:
+                if len(para.strip()) > 100:  # Ensure it's substantial
+                    guidance_paragraphs.append(para)
+                    if len(guidance_paragraphs) > 15:  # Limit sample size
+                        break
+    
+    # Combine paragraphs and add a note about the original document
+    formatted_paragraphs = "\n\n".join(guidance_paragraphs)
+    
+    # Add metadata about the document to help GPT understand the context
+    if guidance_paragraphs:
+        formatted_paragraphs = (
+            f"DOCUMENT TYPE: SEC 8-K Earnings Release for {ticker}\n\n"
+            f"POTENTIAL GUIDANCE INFORMATION (extracted from full document):\n\n{formatted_paragraphs}\n\n"
+            "Note: These are selected paragraphs that may contain forward-looking guidance."
+        )
+    
+    return formatted_paragraphs, found_paragraphs
+
+
 def extract_guidance(text, ticker, client):
     """
-    Improved guidance extraction function that's fully dynamic and works for any company.
-    Enhanced to ensure proper formatting of ranges for better parsing.
+    Modified to work with just the guidance paragraphs instead of the full text.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -477,51 +558,21 @@ if st.button("🔍 Extract Guidance"):
                     # Extract text while preserving structure
                     text = soup.get_text(" ", strip=True)
                     
-                    # Use regex patterns to identify potential guidance sections
-                    guidance_patterns = [
-                        r'(?i)outlook',
-                        r'(?i)guidance',
-                        r'(?i)financial outlook',
-                        r'(?i)business outlook',
-                        r'(?i)forward[\s-]*looking',
-                        r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
-                        r'(?i)(?:we|company) expect(?:s)?',
-                        r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
-                        r'(?i)to be (?:in the range of|approximately)',
-                        r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
-                        r'(?i)growth of (?:approximately|about)',
-                        r'(?i)for (?:fiscal|the fiscal)',
-                        r'(?i)next quarter',
-                        r'(?i)full year',
-                        r'(?i)current quarter',
-                        r'(?i)future quarter',
-                        r'(?i)Q[1-4]'
-                    ]
+                    # NEW: Extract just the guidance paragraphs instead of sending the entire document
+                    guidance_text, found_guidance = find_guidance_paragraphs(text)
                     
-                    # Find paragraphs containing guidance patterns
-                    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-                    guidance_paragraphs = []
-                    
-                    for i, para in enumerate(paragraphs):
-                        if any(re.search(pattern, para) for pattern in guidance_patterns):
-                            # Check if it's likely a forward-looking statement (not a disclaimer)
-                            if not (re.search(r'(?i)safe harbor', para) or 
-                                    (re.search(r'(?i)forward-looking statements', para) and 
-                                    re.search(r'(?i)risks', para))):
-                                guidance_paragraphs.append(para)
-                    
-                    # Check if we found any guidance paragraphs
-                    if guidance_paragraphs:
-                        st.success(f"✅ Found potential guidance information in {len(guidance_paragraphs)} paragraphs.")
+                    # Check if we found any guidance-related text
+                    if guidance_text:
+                        if found_guidance:
+                            st.success(f"✅ Found potential guidance information in the document.")
+                        else:
+                            st.info(f"ℹ️ No clear guidance sections found. Using a sample of the document.")
                         
-                        # Create a highlighted version of the text with guidance sections at the beginning
-                        highlighted_text = "POTENTIAL GUIDANCE SECTIONS:\n\n" + "\n\n".join(guidance_paragraphs) + "\n\n--- FULL DOCUMENT BELOW ---\n\n" + text
-                        
-                        # Extract guidance from the highlighted text
-                        table = extract_guidance(highlighted_text, ticker, client)
+                        # Extract guidance from just the guidance paragraphs
+                        table = extract_guidance(guidance_text, ticker, client)
                     else:
-                        st.warning(f"⚠️ No guidance paragraphs found. Trying with the full document.")
-                        table = extract_guidance(text, ticker, client)
+                        st.warning(f"⚠️ Could not identify any guidance-related text in the document.")
+                        continue
                     
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
@@ -558,17 +609,16 @@ if st.button("🔍 Extract Guidance"):
                             st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
                             
                             # Show a sample of the text to help debug
-                            if guidance_paragraphs:
-                                st.write("Sample of guidance paragraphs:")
-                                for i, para in enumerate(guidance_paragraphs[:2]):
-                                    st.text(para[:300] + "..." if len(para) > 300 else para)
+                            st.write("Sample of text sent to OpenAI:")
+                            sample_length = min(500, len(guidance_text))
+                            st.text(guidance_text[:sample_length] + "..." if len(guidance_text) > sample_length else guidance_text)
                     else:
                         st.warning(f"⚠️ No guidance table found in {url}")
                         
                         # Show a sample of the text to help debug
-                        sample_length = min(500, len(text))
-                        st.write(f"Sample of document text (first {sample_length} characters):")
-                        st.text(text[:sample_length] + "...")
+                        st.write("Sample of text sent to OpenAI:")
+                        sample_length = min(500, len(guidance_text))
+                        st.text(guidance_text[:sample_length] + "..." if len(guidance_text) > sample_length else guidance_text)
                 except Exception as e:
                     st.warning(f"Could not process: {url}. Error: {str(e)}")
 
