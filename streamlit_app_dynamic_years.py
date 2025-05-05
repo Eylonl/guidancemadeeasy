@@ -1,76 +1,69 @@
-def extract_guidance(text, ticker, client):
-    """
-    Improved guidance extraction function that's fully dynamic and works for any company.
-    """
-    prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
+import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+from openai import OpenAI
+import pandas as pd
+import os
+import re
 
-Return a structured table containing:
-- Metric (e.g. Revenue, EPS, Operating Margin, Growth Rate, etc.)
-- Value or range (e.g. $1.5B–$1.6B, $2.05, 5% to 7%, etc.)
-- Applicable period (e.g. Q2, Next Quarter, Full Year, etc.)
+# ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
+number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
 
-VERY IMPORTANT INSTRUCTIONS:
-1. Look for "OUTLOOK" OR "GUIDANCE" SECTIONS that provide future financial projections
-2. Pay attention to statements containing phrases like:
-   - "For the fiscal" 
-   - "For the next"
-   - "For fiscal"
-   - "expect"
-   - "anticipate"
-   - "outlook"
-   - "guidance"
-   - "forecast"
-   - "revenue to be in the range of"
-   - "to be in the range of"
-   - "operating margin to be"
-   - "growth of"
-   - "expected to be"
-
-3. Look for common financial metrics:
-   - Revenue (including ranges and growth percentages)
-   - Subscription Revenue
-   - Cloud Revenue
-   - Operating Margin
-   - Net Income Per Share
-   - EPS (Earnings Per Share)
-   - Free Cash Flow
-   - Adjusted Free Cash Flow
-   - Gross Margin
-   - Operating Income
-   - Adjusted EBITDA
-
-4. Include BOTH quarterly guidance AND full year guidance
-5. For any percentage values, always include the % symbol in your output (e.g., "5% to 7%" or "5%-7%")
-6. Be sure to capture year-over-year growth metrics
-7. If guidance includes both GAAP and non-GAAP measures, include both with clear labels
-8. If numbers are in thousands, millions, or billions, preserve that notation (e.g., "$100M" or "$1.2B")
-9. DO NOT MISS ANY GUIDANCE INFORMATION - this is critical financial data
-10. Respond ONLY with the table format with no additional commentary
-
-Example table format:
-| Metric | Value | Period |
-|--------|-------|--------|
-| Revenue | $267M-$268M | Q2 |
-| Revenue Growth | 19% | Q2 |
-| Revenue | $1.1B-$1.11B | Full Year |
-| Revenue Growth | 19%-20% | Full Year |
-| Operating Margin (Non-GAAP) | 5% | Q2 |
-| EPS (Non-GAAP) | $0.08-$0.09 | Q2 |
-| Operating Margin (Non-GAAP) | 6% | Full Year |
-| EPS (Non-GAAP) | $0.36 | Full Year |
-
-Now extract ALL guidance from this text:\n\n{text}"""
-    
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,  # Lower temperature for more consistent extraction
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
+def extract_number(token: str):
+    if not token or not isinstance(token, str):
         return None
+    neg = token.strip().startswith('(') and token.strip().endswith(')' )
+    tok = token.replace('(', '').replace(')', '').replace('$','') \
+               .replace(',', '').strip().lower()
+    factor = 1.0
+    if tok.endswith('billion'): tok, factor = tok[:-7].strip(), 1000
+    elif tok.endswith('million'): tok, factor = tok[:-7].strip(), 1
+    elif tok.endswith('b'): tok, factor = tok[:-1].strip(), 1000
+    elif tok.endswith('m'): tok, factor = tok[:-1].strip(), 1
+    elif tok.endswith('k'): tok, factor = tok[:-1].strip(), 0.001
+    try:
+        val = float(tok) * factor
+        return -val if neg else val
+    except:
+        return None
+
+
+def format_percent(val):
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return f"{val:.1f}%"
+    return val
+
+def parse_value_range(text: str):
+    if not isinstance(text, str):
+        return (None, None, None)
+    if re.search(r'\b(flat|unchanged)\b', text, re.I):
+        return (0.0, 0.0, 0.0)
+    rng = re.search(fr'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
+    if rng:
+        lo = extract_number(rng.group(1))
+        hi = extract_number(rng.group(2))
+        avg = (lo+hi)/2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    single = re.search(number_token, text, re.I)
+    if single:
+        v = extract_number(single.group(0))
+        return (v, v, v)
+    return (None, None, None)
+
+
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
+
+# Inputs
+ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+# Both filter options displayed at the same time
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
 
 
 @st.cache_data(show_spinner=False)
@@ -113,6 +106,123 @@ def get_fiscal_year_end(ticker, cik):
     except Exception as e:
         st.warning(f"⚠️ Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
         return 12, 31
+
+
+def generate_fiscal_quarters(fiscal_year_end_month):
+    """
+    Dynamically generate fiscal quarters based on the fiscal year end month.
+    """
+    # Calculate the first month of the fiscal year (month after fiscal year end)
+    fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
+    
+    # Generate all four quarters
+    quarters = {}
+    current_month = fiscal_year_start_month
+    
+    for q in range(1, 5):
+        start_month = current_month
+        
+        # Each quarter is 3 months
+        end_month = (start_month + 2) % 12
+        if end_month == 0:  # Handle December (month 0 becomes month 12)
+            end_month = 12
+            
+        quarters[q] = {'start_month': start_month, 'end_month': end_month}
+        
+        # Move to next quarter's start month
+        current_month = (end_month % 12) + 1
+    
+    return quarters
+
+
+def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day):
+    """
+    Calculate the appropriate date range for a fiscal quarter
+    based on the fiscal year end month.
+    """
+    # Generate quarters dynamically based on fiscal year end
+    quarters = generate_fiscal_quarters(fiscal_year_end_month)
+    
+    # Get the specified quarter
+    if quarter_num < 1 or quarter_num > 4:
+        st.error(f"Invalid quarter number: {quarter_num}. Must be 1-4.")
+        return None
+        
+    quarter_info = quarters[quarter_num]
+    start_month = quarter_info['start_month']
+    end_month = quarter_info['end_month']
+    
+    # Determine if the quarter spans calendar years
+    spans_calendar_years = end_month < start_month
+    
+    # Determine the calendar year for each quarter
+    if fiscal_year_end_month == 12:
+        # Simple case: Calendar year matches fiscal year
+        start_calendar_year = year_num
+    else:
+        # For non-calendar fiscal years, determine which calendar year the quarter falls in
+        fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
+        
+        if start_month >= fiscal_year_start_month:
+            # This quarter starts in the previous calendar year
+            # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
+            # Q1 (Jul-Sep) and Q2 (Oct-Dec) start in calendar year 2023
+            start_calendar_year = year_num - 1
+        else:
+            # This quarter starts in the current calendar year
+            # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
+            # Q3 (Jan-Mar) and Q4 (Apr-Jun) start in calendar year 2024
+            start_calendar_year = year_num
+    
+    # For quarters that span calendar years, the end date is in the next calendar year
+    end_calendar_year = start_calendar_year
+    if spans_calendar_years:
+        end_calendar_year = start_calendar_year + 1
+    
+    # Create actual date objects
+    start_date = datetime(start_calendar_year, start_month, 1)
+    
+    # Calculate end date (last day of the end month)
+    if end_month == 2:
+        # Handle February and leap years
+        if (end_calendar_year % 4 == 0 and end_calendar_year % 100 != 0) or (end_calendar_year % 400 == 0):
+            end_day = 29  # Leap year
+        else:
+            end_day = 28
+    elif end_month in [4, 6, 9, 11]:
+        end_day = 30
+    else:
+        end_day = 31
+    
+    end_date = datetime(end_calendar_year, end_month, end_day)
+    
+    # Calculate expected earnings report dates (typically a few weeks after quarter end)
+    report_start = end_date + timedelta(days=15)
+    report_end = report_start + timedelta(days=45)  # Typical reporting window
+    
+    # Output info about the dates
+    quarter_period = f"Q{quarter_num} FY{year_num}"
+    period_description = f"{start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}"
+    expected_report = f"~{report_start.strftime('%B %d, %Y')} to {report_end.strftime('%B %d, %Y')}"
+    
+    # Display fiscal quarter information
+    st.write(f"Fiscal year ends in {datetime(2000, fiscal_year_end_month, 1).strftime('%B')} {fiscal_year_end_day}")
+    st.write(f"Quarter {quarter_num} spans: {datetime(2000, start_month, 1).strftime('%B')}-{datetime(2000, end_month, 1).strftime('%B')}")
+    
+    # Show all quarters
+    st.write("All quarters for this fiscal pattern:")
+    for q, q_info in quarters.items():
+        st.write(f"Q{q}: {datetime(2000, q_info['start_month'], 1).strftime('%B')}-{datetime(2000, q_info['end_month'], 1).strftime('%B')}")
+    
+    return {
+        'quarter_period': quarter_period,
+        'start_date': start_date,
+        'end_date': end_date,
+        'report_start': report_start,
+        'report_end': report_end,
+        'period_description': period_description,
+        'expected_report': expected_report
+    }
 
 
 def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
@@ -227,172 +337,67 @@ def get_ex99_1_links(cik, accessions):
     return links
 
 
-def process_8k_links(links, ticker, client):
+def extract_guidance(text, ticker, client):
     """
-    Process 8-K links to extract guidance information using a dynamic approach.
-    This function contains the improved text processing logic.
+    Improved guidance extraction function that's fully dynamic and works for any company.
     """
-    results = []
+    prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
+
+Return a structured list containing:
+- metric (e.g. Revenue, EPS, Operating Margin)
+- value or range (e.g. $1.5B–$1.6B or $2.05)
+- applicable period (e.g. Q3 FY24, Full Year 2025)
+
+VERY IMPORTANT:
+- Look for sections titled 'Outlook', 'Guidance', 'Financial Outlook', 'Business Outlook', or similar
+- Also look for statements containing phrases like "expect", "anticipate", "forecast", "will be", "to be in the range of"
+- Review the ENTIRE document for ANY forward-looking statements about future performance
+- Pay special attention to sections describing "For the fiscal quarter", "For the fiscal year", "For next quarter", etc.
+- For any percentage values, always include the % symbol in your output (e.g., "5% to 7%" or "5%-7%")
+- If the guidance mentions a negative percentage like "(5%)" or "decrease of 5%", output it as "-5%"
+- Preserve any descriptive text like "Approximately" or "Around" in your output
+- Be sure to capture year-over-year growth metrics as well as absolute values
+- Look for common financial metrics: Revenue, EPS, Operating Margin, Free Cash Flow, Gross Margin, etc.
+- Include both quarterly and full-year guidance if available
+- If guidance includes both GAAP and non-GAAP measures, include both with clear labels
+
+Respond in table format without commentary.\n\n{text}"""
     
-    for date_str, acc, url in links:
-        st.write(f"📄 Processing {url}")
-        try:
-            headers = {"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}
-            html = requests.get(url, headers=headers).text
-            soup = BeautifulSoup(html, "html.parser")
-            
-            # Extract text while preserving some structure
-            text = soup.get_text(" ", strip=True)
-            
-            # Use regex patterns to identify potential guidance sections
-            # These patterns are common across different companies' earnings releases
-            guidance_patterns = [
-                r'(?i)outlook',
-                r'(?i)guidance',
-                r'(?i)financial outlook',
-                r'(?i)business outlook',
-                r'(?i)forward[\s-]*looking',
-                r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
-                r'(?i)(?:we|company) expect(?:s)?',
-                r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
-                r'(?i)to be (?:in the range of|approximately)',
-                r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
-                r'(?i)growth of (?:approximately|about)',
-                r'(?i)for (?:fiscal|the fiscal)',
-                r'(?i)next quarter',
-                r'(?i)full year',
-                r'(?i)current quarter',
-                r'(?i)future quarter',
-                r'(?i)Q[1-4]'
-            ]
-            
-            # Find paragraphs containing guidance patterns
-            paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-            guidance_paragraphs = []
-            
-            for i, para in enumerate(paragraphs):
-                if any(re.search(pattern, para) for pattern in guidance_patterns):
-                    # Check if it's likely a forward-looking statement (not a disclaimer)
-                    if not (re.search(r'(?i)safe harbor', para) or 
-                            (re.search(r'(?i)forward-looking statements', para) and 
-                            re.search(r'(?i)risks', para))):
-                        guidance_paragraphs.append(para)
-            
-            # Check if we found any guidance paragraphs
-            if guidance_paragraphs:
-                st.success(f"✅ Found potential guidance information in {len(guidance_paragraphs)} paragraphs.")
-                
-                # Create a highlighted version of the text with guidance sections at the beginning
-                highlighted_text = "POTENTIAL GUIDANCE SECTIONS:\n\n" + "\n\n".join(guidance_paragraphs) + "\n\n--- FULL DOCUMENT BELOW ---\n\n" + text
-                
-                # Now extract guidance from the highlighted text
-                table = extract_guidance(highlighted_text, ticker, client)
-                
-                if table and "|" in table:
-                    # Process the table as before
-                    rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                    if len(rows) > 1:  # Check if we have header and at least one row of data
-                        df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                        
-                        # Store which rows have percentages in the Value column
-                        percentage_rows = []
-                        for idx, row in df.iterrows():
-                            if '%' in str(row[df.columns[1]]):
-                                percentage_rows.append(idx)
-                        
-                        # Parse low, high, and average from Value column
-                        value_col = df.columns[1]
-                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                        
-                        # Apply GAAP/non-GAAP split
-                        df = split_gaap_non_gaap(df)
-                        
-                        # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                        for idx in df.index:
-                            # Check if the original row had a percentage
-                            if idx in percentage_rows:
-                                # Add % to Low, High, Average columns
-                                for col in ['Low', 'High', 'Average']:
-                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                        df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                        
-                        df["FilingDate"] = date_str
-                        df["8K_Link"] = url
-                        results.append(df)
-                        st.success("✅ Guidance extracted from this 8-K.")
-                    else:
-                        st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
-                        
-                        # Show the identified guidance paragraphs
-                        st.write("Potential guidance paragraphs found but not successfully extracted as a table:")
-                        for i, para in enumerate(guidance_paragraphs[:3]):  # Show up to 3 paragraphs
-                            st.write(f"Paragraph {i+1}:")
-                            st.text(para[:300] + "..." if len(para) > 300 else para)
-                else:
-                    st.warning(f"⚠️ No guidance table found in {url}")
-                    
-                    # Show the identified guidance paragraphs
-                    st.write("Potential guidance paragraphs were found but not successfully extracted as a table:")
-                    for i, para in enumerate(guidance_paragraphs[:3]):  # Show up to 3 paragraphs
-                        st.write(f"Paragraph {i+1}:")
-                        st.text(para[:300] + "..." if len(para) > 300 else para)
-            else:
-                st.warning(f"⚠️ No guidance paragraphs found in {url}")
-                
-                # Show a sample of the text to help debug
-                sample_length = min(500, len(text))
-                st.write(f"Sample of document text (first {sample_length} characters):")
-                st.text(text[:sample_length] + "...")
-                
-                # Try with the full text anyway as a fallback
-                st.write("Attempting to extract guidance from the full document as a fallback...")
-                table = extract_guidance(text, ticker, client)
-                
-                if table and "|" in table:
-                    # Process the table as before
-                    rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                    if len(rows) > 1:  # Check if we have header and at least one row of data
-                        df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                        
-                        # Continue processing as above...
-                        # Store which rows have percentages in the Value column
-                        percentage_rows = []
-                        for idx, row in df.iterrows():
-                            if '%' in str(row[df.columns[1]]):
-                                percentage_rows.append(idx)
-                        
-                        # Parse low, high, and average from Value column
-                        value_col = df.columns[1]
-                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                        
-                        # Apply GAAP/non-GAAP split
-                        df = split_gaap_non_gaap(df)
-                        
-                        # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                        for idx in df.index:
-                            # Check if the original row had a percentage
-                            if idx in percentage_rows:
-                                # Add % to Low, High, Average columns
-                                for col in ['Low', 'High', 'Average']:
-                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                        df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                        
-                        df["FilingDate"] = date_str
-                        df["8K_Link"] = url
-                        results.append(df)
-                        st.success("✅ Guidance extracted from this 8-K using fallback method.")
-                    else:
-                        st.warning(f"⚠️ Table format was detected but no data rows were found in fallback attempt")
-                else:
-                    st.warning(f"⚠️ No guidance table found in fallback attempt")
-        except Exception as e:
-            st.warning(f"Could not process: {url}. Error: {str(e)}")
-            st.error(f"Exception details: {type(e).__name__}: {str(e)}")
-    
-    return results
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
+        return None
 
 
-# Add this to the "if st.button" section, replacing the loop that processes links
+def split_gaap_non_gaap(df):
+    if 'Value' not in df.columns or 'Metric' not in df.columns:
+        return df  # Avoid crash if column names are missing
+
+    rows = []
+    for _, row in df.iterrows():
+        val = str(row['Value'])
+        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
+        if match:
+            gaap_val = match.group(1).strip() + " GAAP"
+            non_gaap_val = match.group(2).strip() + " non-GAAP"
+            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
+                new_row = row.copy()
+                new_row["Value"] = new_val
+                new_row["Metric"] = f"{row['Metric']} ({label})"
+                lo, hi, avg = parse_value_range(new_val)
+                new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
+                rows.append(new_row)
+        else:
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -424,9 +429,111 @@ if st.button("🔍 Extract Guidance"):
                 accessions = get_accessions(cik, ticker)
 
             links = get_ex99_1_links(cik, accessions)
-            
-            # Use our improved processing function
-            results = process_8k_links(links, ticker, client)
+            results = []
+
+            for date_str, acc, url in links:
+                st.write(f"📄 Processing {url}")
+                try:
+                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    # Extract text while preserving structure
+                    text = soup.get_text(" ", strip=True)
+                    
+                    # Use regex patterns to identify potential guidance sections
+                    guidance_patterns = [
+                        r'(?i)outlook',
+                        r'(?i)guidance',
+                        r'(?i)financial outlook',
+                        r'(?i)business outlook',
+                        r'(?i)forward[\s-]*looking',
+                        r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
+                        r'(?i)(?:we|company) expect(?:s)?',
+                        r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
+                        r'(?i)to be (?:in the range of|approximately)',
+                        r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
+                        r'(?i)growth of (?:approximately|about)',
+                        r'(?i)for (?:fiscal|the fiscal)',
+                        r'(?i)next quarter',
+                        r'(?i)full year',
+                        r'(?i)current quarter',
+                        r'(?i)future quarter',
+                        r'(?i)Q[1-4]'
+                    ]
+                    
+                    # Find paragraphs containing guidance patterns
+                    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                    guidance_paragraphs = []
+                    
+                    for i, para in enumerate(paragraphs):
+                        if any(re.search(pattern, para) for pattern in guidance_patterns):
+                            # Check if it's likely a forward-looking statement (not a disclaimer)
+                            if not (re.search(r'(?i)safe harbor', para) or 
+                                    (re.search(r'(?i)forward-looking statements', para) and 
+                                    re.search(r'(?i)risks', para))):
+                                guidance_paragraphs.append(para)
+                    
+                    # Check if we found any guidance paragraphs
+                    if guidance_paragraphs:
+                        st.success(f"✅ Found potential guidance information in {len(guidance_paragraphs)} paragraphs.")
+                        
+                        # Create a highlighted version of the text with guidance sections at the beginning
+                        highlighted_text = "POTENTIAL GUIDANCE SECTIONS:\n\n" + "\n\n".join(guidance_paragraphs) + "\n\n--- FULL DOCUMENT BELOW ---\n\n" + text
+                        
+                        # Extract guidance from the highlighted text
+                        table = extract_guidance(highlighted_text, ticker, client)
+                    else:
+                        st.warning(f"⚠️ No guidance paragraphs found. Trying with the full document.")
+                        table = extract_guidance(text, ticker, client)
+                    
+                    if table and "|" in table:
+                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                        if len(rows) > 1:  # Check if we have header and at least one row of data
+                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                            
+                            # Store which rows have percentages in the Value column
+                            percentage_rows = []
+                            for idx, row in df.iterrows():
+                                if '%' in str(row[df.columns[1]]):
+                                    percentage_rows.append(idx)
+                            
+                            # Parse low, high, and average from Value column
+                            value_col = df.columns[1]
+                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                            
+                            # Apply GAAP/non-GAAP split
+                            df = split_gaap_non_gaap(df)
+                            
+                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                            for idx in df.index:
+                                # Check if the original row had a percentage
+                                if idx in percentage_rows:
+                                    # Add % to Low, High, Average columns
+                                    for col in ['Low', 'High', 'Average']:
+                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                            df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                            
+                            df["FilingDate"] = date_str
+                            df["8K_Link"] = url
+                            results.append(df)
+                            st.success("✅ Guidance extracted from this 8-K.")
+                        else:
+                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
+                            
+                            # Show a sample of the text to help debug
+                            if guidance_paragraphs:
+                                st.write("Sample of guidance paragraphs:")
+                                for i, para in enumerate(guidance_paragraphs[:2]):
+                                    st.text(para[:300] + "..." if len(para) > 300 else para)
+                    else:
+                        st.warning(f"⚠️ No guidance table found in {url}")
+                        
+                        # Show a sample of the text to help debug
+                        sample_length = min(500, len(text))
+                        st.write(f"Sample of document text (first {sample_length} characters):")
+                        st.text(text[:sample_length] + "...")
+                except Exception as e:
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
 
             if results:
                 combined = pd.concat(results, ignore_index=True)
