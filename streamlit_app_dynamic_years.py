@@ -29,10 +29,10 @@ def extract_number(token: str):
     except:
         return None
 
+def parse_value_range(text: str):
 
 def is_percent(text):
     return isinstance(text, str) and "%" in text
-def parse_value_range(text: str):
     if not isinstance(text, str):
         return (None, None, None)
     if re.search(r'\b(flat|unchanged)\b', text, re.I):
