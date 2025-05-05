@@ -161,17 +161,11 @@ def split_gaap_non_gaap(df):
 
 if st.button("🔍 Extract Guidance"):
     
-        if debug_filenames:
-            st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
             for fname in debug_filenames:
-                st.text(f"📄 Found filename: {fname}")
                 for fname in debug_filenames:
 
     
-        if debug_filenames:
-            st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
             for fname in debug_filenames:
-                st.text(f"📄 Found filename: {fname}")
                 for fname in debug_filenames:
 
             if not api_key:
@@ -187,6 +181,10 @@ if st.button("🔍 Extract Guidance"):
             results = []
 
             for date_str, acc, url in links:
+        if debug_filenames:
+            st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
+            for fname in debug_filenames:
+                st.text(f"📄 Found filename: {fname}")
                 st.write(f"📄 Processing {url}")
                 try:
                     html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
