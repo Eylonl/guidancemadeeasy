@@ -574,6 +574,25 @@ if st.button("🔍 Extract Guidance"):
 
             if results:
                 combined = pd.concat(results, ignore_index=True)
+                
+                # Preview the table
+                st.subheader("🔍 Preview of Extracted Guidance")
+                
+                # Select the most relevant columns for display
+                display_cols = ["Metric", "Value", "Period", "Low", "High", "Average", "FilingDate"]
+                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
+                
+                # Display the table with formatting
+                st.dataframe(
+                    display_df.style.format({
+                        "Low": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x,
+                        "High": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x,
+                        "Average": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x
+                    }),
+                    use_container_width=True
+                )
+                
+                # Add download button
                 import io
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
