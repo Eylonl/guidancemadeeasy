@@ -161,12 +161,20 @@ def split_gaap_non_gaap(df):
 
 if st.button("🔍 Extract Guidance"):
     
-            if debug_filenames:
-                st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
+        if debug_filenames:
+            st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
+            for fname in debug_filenames:
+                st.text(f"📄 Found filename: {fname}")
                 for fname in debug_filenames:
-                    st.text(f"📄 Found filename: {fname}")
 
-    if not api_key:
+    
+        if debug_filenames:
+            st.info(f"🔎 Matching for: q{quarter[-1].lower()}fy{fiscal_year[-2:]}")
+            for fname in debug_filenames:
+                st.text(f"📄 Found filename: {fname}")
+                for fname in debug_filenames:
+
+            if not api_key:
         st.error("Please enter your OpenAI API key.")
     else:
         cik = lookup_cik(ticker)
