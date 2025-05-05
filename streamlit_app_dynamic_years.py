@@ -15,10 +15,13 @@ def extract_number(token: str):
         return None
     
     # Check if the token is a negative value with a - sign
-    is_negative = '-' in token
+    is_negative = token.strip().startswith('-')
     
     # Also check for common financial notation of parentheses to indicate negative
-    neg = (token.strip().startswith('(') and token.strip().endswith(')')) or is_negative
+    parentheses_negative = token.strip().startswith('(') and token.strip().endswith(')')
+    
+    # Store whether the number is negative for later use
+    neg = is_negative or parentheses_negative
     
     # Remove parentheses, dollar signs, and commas
     tok = token.replace('(', '').replace(')', '').replace('$','') \
@@ -39,17 +42,31 @@ def extract_number(token: str):
 
 
 def format_percent(val):
+    """Format a value as a percentage with consistent decimal places"""
     if val is None:
         return None
     if isinstance(val, (int, float)):
         return f"{val:.1f}%"
     return val
 
+def format_dollar(val):
+    """Format a value as a dollar amount with consistent decimal places"""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        # Use different formatting based on value magnitude
+        if abs(val) >= 100:  # Large values, use whole numbers
+            return f"${val:.0f}"
+        elif abs(val) >= 10:  # Medium values, use 1 decimal place
+            return f"${val:.1f}"
+        else:  # Small values, use 2 decimal places
+            return f"${val:.2f}"
+    return val
+
 def parse_value_range(text: str):
     """
     Enhanced function to parse value ranges from guidance text.
-    Handles formats like "$0.08-$0.09" with dollar signs on both numbers,
-    and properly processes negative values in parentheses.
+    Handles formats like "$0.08 to $0.09", "-14% to -13%", etc. with proper negative value processing.
     """
     if not isinstance(text, str):
         return (None, None, None)
@@ -69,29 +86,76 @@ def parse_value_range(text: str):
         val = float(decrease_match.group(1))
         return (-val, -val, -val)
     
-    # First try to match ranges with dollar signs on both sides like "$0.08-$0.09"
+    # First look for ranges with "to" between values
+    # 1. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
+    dollar_to_range = re.search(r'(-?\$\s*\d+(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:\.\d+)?)', text, re.I)
+    if dollar_to_range:
+        lo = extract_number(dollar_to_range.group(1))
+        hi = extract_number(dollar_to_range.group(2))
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # 2. Percent to percent: "5% to 7%" or "-14% to -13%"
+    percent_to_range = re.search(r'(-?\d+(?:\.\d+)?)\s*%\s*(?:to|[-–—~])\s*(-?\d+(?:\.\d+)?)\s*%', text, re.I)
+    if percent_to_range:
+        lo = float(percent_to_range.group(1))
+        hi = float(percent_to_range.group(2))
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # 3. Number to number: "100 to 110" or "-100 to -90"
+    number_to_range = re.search(fr'({number_token})\s*(?:to|[-–—~])\s*({number_token})', text, re.I)
+    if number_to_range:
+        lo = extract_number(number_to_range.group(1))
+        hi = extract_number(number_to_range.group(2))
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # Look for hyphenated ranges (backup if "to" format not found)
+    # 1. Dollar-dollar: "$0.08-$0.09" or "-$0.08-$0.06"
     dollar_range = re.search(r'(-?\$\s*\d+(?:\.\d+)?)\s*[-–—~]\s*(-?\$\s*\d+(?:\.\d+)?)', text, re.I)
     if dollar_range:
         lo = extract_number(dollar_range.group(1))
         hi = extract_number(dollar_range.group(2))
+        # If first value is negative but second isn't explicitly negative, make it negative too
+        if lo is not None and hi is not None and lo < 0 and hi > 0:
+            # Check if the original text doesn't have an explicit negative sign or minus for the second value
+            if not re.search(r'[-–—~]\s*-\$', dollar_range.group(0)):
+                hi = -hi  # Both values should be negative
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
     
-    # Try to match percentage ranges with percent signs on both sides like "5%-7%"
+    # 2. Percent-percent: "5%-7%" or "-14%-13%"
     percent_range = re.search(r'(-?\d+(?:\.\d+)?)\s*%\s*[-–—~]\s*(-?\d+(?:\.\d+)?)\s*%', text, re.I)
     if percent_range:
         lo = float(percent_range.group(1))
         hi = float(percent_range.group(2))
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        # If first value is negative but second isn't explicitly negative, make it negative too
+        if lo < 0 and hi > 0:
+            # Check if the original text doesn't have an explicit negative sign or minus for the second value
+            if not re.search(r'%\s*[-–—~]\s*-', percent_range.group(0)):
+                hi = -hi  # Both values should be negative
+        avg = (lo + hi) / 2
         return (lo, hi, avg)
     
-    # Then try standard range formats
-    rng = re.search(fr'({number_token})\s*(?:[-–—~]|to)\s*({number_token})', text, re.I)
-    if rng:
-        lo = extract_number(rng.group(1))
-        hi = extract_number(rng.group(2))
-        avg = (lo+hi)/2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
+    # Special handling for "-X to -Y" format
+    # This captures ranges like "-14% to -13%" or "-$0.08 to -$0.06" where both values are negative
+    neg_range = re.search(r'-(\d+(?:\.\d+)?(?:\s*%)?)\s*(?:to|[-–—~])\s*-(\d+(?:\.\d+)?(?:\s*%)?)', text, re.I)
+    if neg_range:
+        lo_text, hi_text = neg_range.group(1), neg_range.group(2)
+        is_percent = '%' in lo_text or '%' in hi_text
+        
+        # Remove % symbols for conversion
+        lo_text = lo_text.replace('%', '').strip()
+        hi_text = hi_text.replace('%', '').strip()
+        
+        try:
+            lo = -float(lo_text)  # Negative since we already stripped the - sign
+            hi = -float(hi_text)  # Negative since we already stripped the - sign
+            avg = (lo + hi) / 2
+            return (lo, hi, avg)
+        except:
+            pass
     
     # Finally check for a single value
     single = re.search(number_token, text, re.I)
@@ -100,6 +164,67 @@ def parse_value_range(text: str):
         return (v, v, v)
     
     return (None, None, None)
+
+
+def check_range_consistency(df):
+    """
+    Check for and fix inconsistencies in range parsing.
+    For example, if Low is negative but High is positive when both should be negative.
+    """
+    for idx, row in df.iterrows():
+        # Get low and high values if they exist
+        low, high = row.get('Low'), row.get('High')
+        
+        # Skip if either value is missing
+        if low is None or high is None:
+            continue
+            
+        # Convert to float if they're strings with % or $ signs
+        if isinstance(low, str):
+            low_val = float(low.replace('%', '').replace('$', '').strip())
+        else:
+            low_val = low
+            
+        if isinstance(high, str):
+            high_val = float(high.replace('%', '').replace('$', '').strip())
+        else:
+            high_val = high
+        
+        # If low is negative and high is positive, but the original value contains
+        # language suggesting both should be negative, make high negative too
+        original_value = str(row.get('Value', ''))
+        if low_val < 0 and high_val > 0:
+            if re.search(r'(?:decline|decrease|down|negative|loss)', original_value, re.I):
+                # Both values should be negative - fix the high value
+                if isinstance(high, str):
+                    if '%' in high:
+                        df.at[idx, 'High'] = f"{-high_val:.1f}%"
+                    elif '$' in high:
+                        if abs(high_val) >= 100:
+                            df.at[idx, 'High'] = f"-${abs(high_val):.0f}"
+                        elif abs(high_val) >= 10:
+                            df.at[idx, 'High'] = f"-${abs(high_val):.1f}"
+                        else:
+                            df.at[idx, 'High'] = f"-${abs(high_val):.2f}"
+                else:
+                    df.at[idx, 'High'] = -abs(high_val)
+                
+                # Also fix the average
+                if 'Average' in df.columns:
+                    avg = (low_val + (-high_val)) / 2
+                    if isinstance(row.get('Average'), str) and '%' in row.get('Average', ''):
+                        df.at[idx, 'Average'] = f"{avg:.1f}%"
+                    elif isinstance(row.get('Average'), str) and '$' in row.get('Average', ''):
+                        if abs(avg) >= 100:
+                            df.at[idx, 'Average'] = f"${avg:.0f}"
+                        elif abs(avg) >= 10:
+                            df.at[idx, 'Average'] = f"${avg:.1f}"
+                        else:
+                            df.at[idx, 'Average'] = f"${avg:.2f}"
+                    else:
+                        df.at[idx, 'Average'] = avg
+    
+    return df
 
 
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
@@ -469,7 +594,7 @@ def find_guidance_paragraphs(text):
 
 def extract_guidance(text, ticker, client):
     """
-    Modified to fix negative number conversion issues.
+    Enhanced function to extract guidance from SEC filings with better handling of negative ranges.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
@@ -489,41 +614,33 @@ VERY IMPORTANT:
 - Include both quarterly and full-year guidance if available
 - If guidance includes both GAAP and non-GAAP measures, include both with clear labels
 
-CRITICAL HANDLING OF NEGATIVE VALUES:
+CRITICAL HANDLING OF NEGATIVE RANGES:
 1. For NEGATIVE PERCENTAGES:
-   - When percentages appear with parentheses like "(10%)" or "~(10%)", this indicates a NEGATIVE value
-   - CORRECTLY output these as "-10%" with a minus sign
-   - Examples:
-     - "(5%)" or "~(5%)" should be output as "-5%"
-     - "decrease of 10%" should be output as "-10%"
-     - "(5% to 7%)" should be output as "-5% to -7%"
+   - Format negative percentage ranges with minus signs on BOTH numbers, never using parentheses
+   - CORRECT: "-14% to -13%" (use this format)
+   - INCORRECT: "(-14% to -13%)" or "(-14%) to (-13%)" (don't use parentheses)
+   - When endpoints have different signs, maintain correct signs: "-5% to +2%"
 
 2. For NEGATIVE DOLLAR VALUES:
-   - Values in parentheses like "$(0.01)" indicate NEGATIVE values
-   - CORRECTLY output these as "-$0.01" with a minus sign
-   - Examples:
-     - "$(0.01)" should be output as "-$0.01"
-     - "$(0.01) to $(0.03)" should be output as "-$0.01 to -$0.03"
-     - "loss of $0.01 per share" should be output as "-$0.01"
+   - Format negative dollar ranges with minus signs on BOTH numbers, never using parentheses
+   - CORRECT: "-$0.08 to -$0.06" (use this format)
+   - INCORRECT: "($0.08) to ($0.06)" or "($0.08 to $0.06)" (don't use parentheses)
+   - When endpoints have different signs, maintain correct signs: "-$0.01 to $0.03"
 
-CRITICAL FORMATTING FOR BILLION VALUES:
-- When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), convert it to millions by multiplying by 1000:
-  - Example: "$1.10 billion" should be output as "$1,100 million"
-  - Example: "$1.11B" should be output as "$1,110 million"
-  - Example: A range of "$1.10-$1.11 billion" should be output as "$1,100-$1,110 million"
-- IMPORTANT: Do NOT add extra zeros beyond multiplying by 1000. Just convert the exact number from billions to millions.
-- WRONG: "$1.117 billion" should NOT become "$1,117,000 million"
-- CORRECT: "$1.117 billion" should become "$1,117 million"
-- For ranges, convert each number individually: "$1.117-$1.121 billion" becomes "$1,117-$1,121 million"
+3. For ALL NEGATIVE RANGES:
+   - Always use "to" between range values, not just a hyphen
+   - When using "to" between range values, ensure both endpoints have the appropriate sign
+   - CORRECT: "-$0.20 to -$0.14" (not "-$0.20 to $0.14" or "-$0.20-$0.14")
+   - CORRECT: "-14% to -13%" (not "-14% to 13%" or "-14%-13%")
 
 IMPORTANT FORMATTING INSTRUCTIONS:
-- For dollar ranges, use the format "$X-$Y" (with dollar sign before each number)
-  - Example: "$0.08-$0.09" (not "$0.08-0.09")
-- For percentage ranges, use the format "X%-Y%" (with % after each number)
-  - Example: "5%-7%" (not "5-7%")
-- For other numeric ranges, use "X-Y" format
-  - Example: "100-110" (not "100 to 110")
-- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.) EXCEPT for billion values which must be converted as instructed above
+- For dollar ranges, use the format "$X to $Y" (with dollar sign before each number)
+  - Example: "$0.08 to $0.09" (not "$0.08-0.09")
+- For percentage ranges, use the format "X% to Y%" (with % after each number)
+  - Example: "5% to 7%" (not "5-7%")
+- For other numeric ranges, use "X to Y" format
+  - Example: "100 to 110" (not "100-110")
+- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.)
 
 Respond in table format without commentary.\n\n{text}"""
     
@@ -648,6 +765,33 @@ if st.button("🔍 Extract Guidance"):
                                         if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
                                             df.loc[idx, col] = f"{df.loc[idx, col]:.1f}%"
                             
+                            # Apply consistency checks to fix any issues with negative ranges
+                            df = check_range_consistency(df)
+                            
+                            # Check for potential issues and missing data
+                            for idx, row in df.iterrows():
+                                # For metrics known to usually be negative (Loss, Decrease, etc.)
+                                if any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease']):
+                                    # Check if values should be negative
+                                    for col in ['Low', 'High', 'Average']:
+                                        if col in df.columns and row.get(col) is not None:
+                                            val = row[col]
+                                            if isinstance(val, (int, float)) and val > 0:
+                                                # If it's positive but should be negative, fix it
+                                                df.at[idx, col] = -abs(val)
+                                            elif isinstance(val, str) and val.replace('$', '').replace('%', '').strip().startswith('-') == False:
+                                                # Remove any $ or % for conversion
+                                                clean_val = val.replace('$', '').replace('%', '').strip()
+                                                try:
+                                                    num_val = float(clean_val)
+                                                    # Reformat with negative sign
+                                                    if '%' in val:
+                                                        df.at[idx, col] = f"-{abs(num_val):.1f}%"
+                                                    elif '$' in val:
+                                                        df.at[idx, col] = f"-${abs(num_val):.2f}"
+                                                except:
+                                                    pass
+                            
                             df["FilingDate"] = date_str
                             df["8K_Link"] = url
                             results.append(df)
@@ -679,15 +823,20 @@ if st.button("🔍 Extract Guidance"):
                 display_cols = ["Metric", "Value", "Period", "Low", "High", "Average", "FilingDate"]
                 display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
                 
+                # Apply custom formatting when displaying
+                # Convert numeric columns to appropriate string formats
+                for col in ['Low', 'High', 'Average']:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(
+                            lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
+                                      any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
+                                      else format_dollar(x) if isinstance(x, (int, float)) and 
+                                      any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
+                                      else x)
+                        )
+                
                 # Display the table with formatting
-                st.dataframe(
-                    display_df.style.format({
-                        "Low": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x,
-                        "High": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x,
-                        "Average": lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x
-                    }),
-                    use_container_width=True
-                )
+                st.dataframe(display_df, use_container_width=True)
                 
                 # Add download button
                 import io
