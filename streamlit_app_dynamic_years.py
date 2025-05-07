@@ -1206,62 +1206,43 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-             # Update the Excel export section to avoid #DIV/0! errors
-# Replace this section in the main code
-
-# Prepare Excel export with proper formatting
-# Format the dataframe for Excel export
-excel_df = format_dataframe_for_excel(combined)
-
-# Add download button
-excel_buffer = io.BytesIO()
-with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-    excel_df.to_excel(writer, index=False, sheet_name='Guidance')
-    
-    # Access the XlsxWriter workbook and worksheet objects
-    workbook = writer.book
-    worksheet = writer.sheets['Guidance']
-    
-    # Create formats for percentages and currency
-    percent_format = workbook.add_format({'num_format': '0.0%'})
-    currency_format = workbook.add_format({'num_format': '$#,##0.00'})
-    plain_format = workbook.add_format({'num_format': '0.00'})
-    
-    # Apply formats based on content
-    for col_idx, col_name in enumerate(excel_df.columns):
-        if col_name in ['Low', 'High', 'Average']:
-            # Set column width
-            worksheet.set_column(col_idx, col_idx, 12)
-            
-            # Apply formatting based on the content pattern in the Value column
-            if 'Value' in excel_df.columns:  # Make sure Value column exists
-                if excel_df['Value'].astype(str).str.contains('%').any():
-                    worksheet.set_column(col_idx, col_idx, 12, percent_format)
+                # Prepare Excel export with proper formatting
+                # Format the dataframe for Excel export
+                excel_df = format_dataframe_for_excel(combined)
+                
+                # Add download button
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                    excel_df.to_excel(writer, index=False, sheet_name='Guidance')
                     
-                    # Add a conditional format to handle empty cells or zeros
-                    # This prevents #DIV/0! errors in the spreadsheet
-                    worksheet.conditional_format(1, col_idx, len(excel_df), col_idx, {
-                        'type': 'cell',
-                        'criteria': '=',
-                        'value': 0,
-                        'format': workbook.add_format({'num_format': '0%'})
-                    })
+                    # Access the XlsxWriter workbook and worksheet objects
+                    workbook = writer.book
+                    worksheet = writer.sheets['Guidance']
                     
-                    worksheet.conditional_format(1, col_idx, len(excel_df), col_idx, {
-                        'type': 'blanks',
-                        'format': workbook.add_format({'num_format': 'General'})
-                    })
-                elif excel_df['Value'].astype(str).str.contains('\$').any():
-                    worksheet.set_column(col_idx, col_idx, 15, currency_format)
-                else:
-                    # For non-percentage, non-currency numeric columns
-                    worksheet.set_column(col_idx, col_idx, 12, plain_format)
-
-excel_buffer.seek(0)
-
-st.download_button(
-    "📥 Download Excel", 
-    data=excel_buffer.getvalue(), 
-    file_name=f"{ticker}_guidance_output.xlsx", 
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+                    # Create formats for percentages and currency
+                    percent_format = workbook.add_format({'num_format': '0.0%'})
+                    currency_format = workbook.add_format({'num_format': '$#,##0.00'})
+                    
+                    # Apply formats based on content
+                    for col_idx, col_name in enumerate(excel_df.columns):
+                        if col_name in ['Low', 'High', 'Average']:
+                            # Set column width
+                            worksheet.set_column(col_idx, col_idx, 12)
+                            
+                            # Apply formatting based on the content pattern in the Value column
+                            if 'Value' in excel_df.columns:  # Make sure Value column exists
+                                if excel_df['Value'].astype(str).str.contains('%').any():
+                                    worksheet.set_column(col_idx, col_idx, 12, percent_format)
+                                elif excel_df['Value'].astype(str).str.contains('\$').any():
+                                    worksheet.set_column(col_idx, col_idx, 15, currency_format)
+                
+                excel_buffer.seek(0)
+                
+                st.download_button(
+                    "📥 Download Excel", 
+                    data=excel_buffer.getvalue(), 
+                    file_name=f"{ticker}_guidance_output.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.warning("No guidance data extracted.")
