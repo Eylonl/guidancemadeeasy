@@ -1,4 +1,5 @@
 
+ 
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -143,6 +144,7 @@ def parse_value_range(text: str):
         hi = extract_number(hi_text)
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
+
     # 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
     dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
     if dollar_to_range:
@@ -259,7 +261,7 @@ def correct_value_signs(df):
             (re.search(r'^\d', numeric_repr.strip()) and not 
              (numeric_repr.startswith('(') and numeric_repr.endswith(')')))
         )
-
+        
         # Look for explicit positive indicators in surrounding context
         has_positive_context = (
             not is_explicitly_negative and
@@ -522,13 +524,64 @@ def standardize_metrics(df):
 def enhance_guidance_formatting(df, client, model_name):
     """
     Function to improve the formatting and standardization of guidance data
+    using GPT to generate proper Excel formatting and standardize metric names.
     """
     if df.empty:
         return df, None
+        
+    # Create sample of the dataframe to include in the prompt
+    sample_rows = min(5, len(df))
+    df_sample = df.head(sample_rows).to_string()
     
-    # Just return the original dataframe without any GPT requests
-    # to avoid displaying the unwanted message
-    return df, None
+    # Create the GPT prompt for formatting improvement
+    prompt = f"""
+I need to improve the output formatting of my SEC 8-K Guidance Extractor tool that parses financial guidance from earnings releases. Here's a sample of my current dataframe:
+
+{df_sample}
+
+Please help me with two key improvements:
+
+1. EXCEL FORMATTING: When the data is exported to Excel, I need numeric values to maintain their proper formatting types rather than being exported as strings. Specifically:
+   - Percentage values should be formatted as actual percentage cells in Excel (not just text with % symbols)
+   - Dollar values should be formatted as currency cells in Excel (not just text with $ symbols)
+   - Plain numeric values should be formatted as number cells
+   - This should happen during the Excel export process without changing how values display in the Streamlit interface
+
+2. METRIC STANDARDIZATION: I need a comprehensive mapping of common financial metric variations to standard labels. For example:
+   - Various forms of "Non-GAAP Net Income Per Share" should standardize to "Non-GAAP EPS"
+   - "Net Income Per Share" variations should standardize to "GAAP EPS"
+   - "Revenue" variations (like "Total Revenue") should standardize to just "Revenue"
+   - "Operating Income" variations should standardize to "Operating Income"
+   - "Adjusted EBITDA" variations should standardize to "Adj. EBITDA"
+
+Please provide two specific functions I can add:
+1. A 'standardize_metrics' function that takes a dataframe and standardizes the metric names
+2. A 'format_dataframe_for_excel' function that properly types my numeric data for Excel export
+
+I need these to be Python functions that I can directly add to my code.
+"""
+    
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        
+        st.info("💡 Applying GPT-suggested formatting and standardization improvements")
+        formatting_advice = response.choices[0].message.content
+        
+        # Display the advice in a collapsible section
+        with st.expander("Show GPT formatting recommendations"):
+            st.write(formatting_advice)
+            
+        # Parse and apply the code snippets from GPT (this would require additional logic)
+        # For now, let's return the original dataframe and let the user implement the suggestions
+        return df, formatting_advice
+        
+    except Exception as e:
+        st.warning(f"⚠️ Error getting formatting advice: {str(e)}")
+        return df, None
 
 def extract_guidance(text, ticker, client, model_name):
     """
@@ -701,6 +754,28 @@ def find_guidance_paragraphs(text):
     
     return formatted_paragraphs, found_paragraphs
 
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
+
+# Inputs
+ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+# Add model selection dropdown
+openai_models = {
+    "GPT-4 Turbo": "gpt-4-turbo-preview",
+    "GPT-4": "gpt-4",
+    "GPT-3.5 Turbo": "gpt-3.5-turbo"
+}
+selected_model = st.selectbox(
+    "Select OpenAI Model",
+    list(openai_models.keys()),
+    index=0  # Default to first option (GPT-4 Turbo)
+)
+
+# Both filter options displayed at the same time
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
 
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
@@ -784,7 +859,7 @@ def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fisca
     quarter_info = quarters[quarter_num]
     start_month = quarter_info['start_month']
     end_month = quarter_info['end_month']
-
+    
     # Determine if the quarter spans calendar years
     spans_calendar_years = end_month < start_month
     
@@ -881,7 +956,7 @@ def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
                 date = datetime.strptime(date_str, "%Y-%m-%d")
                 if date >= cutoff:
                     accessions.append((accession, date_str))
-
+    
     elif specific_quarter:
         # Parse quarter and year from input - handle various formats
         # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
@@ -967,29 +1042,6 @@ def get_ex99_1_links(cik, accessions):
                     break
     return links
 
-st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
-st.title("📄 SEC 8-K Guidance Extractor")
-
-# Inputs
-ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
-api_key = st.text_input("Enter OpenAI API Key", type="password")
-
-# Add model selection dropdown
-openai_models = {
-    "GPT-4 Turbo": "gpt-4-turbo-preview",
-    "GPT-4": "gpt-4",
-    "GPT-3.5 Turbo": "gpt-3.5-turbo"
-}
-selected_model = st.selectbox(
-    "Select OpenAI Model",
-    list(openai_models.keys()),
-    index=0  # Default to first option (GPT-4 Turbo)
-)
-
-# Both filter options displayed at the same time
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
-quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
-
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -998,200 +1050,179 @@ if st.button("🔍 Extract Guidance"):
         if not cik:
             st.error("CIK not found for ticker.")
         else:
-            try:
-                # Get the selected model ID from the dropdown
-                model_id = openai_models[selected_model]
-                
-                # Initialize the OpenAI client
-                client = OpenAI(api_key=api_key)
-                
-                # Display model information once at the beginning
-                st.info(f"Using OpenAI model: {selected_model}")
-                
-                # Store the ticker for later use
-                st.session_state['ticker'] = ticker
-                
-                # Handle different filtering options
-                if quarter_input.strip():
-                    # Quarter input takes precedence
-                    accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
-                    if not accessions:
-                        st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
-                elif year_input.strip():
-                    try:
-                        years_back = int(year_input.strip())
-                        accessions = get_accessions(cik, ticker, years_back=years_back)
-                        if not accessions:
-                            st.warning(f"No 8-K filings found within the past {years_back} years.")
-                    except ValueError:
-                        st.error("Invalid year input. Must be a number.")
-                        accessions = []
-                else:
-                    # Default to most recent if neither input is provided
-                    accessions = get_accessions(cik, ticker)
-                    if not accessions:
-                        st.warning(f"No 8-K filings found for {ticker}.")
+            # Get the selected model ID from the dropdown
+            model_id = openai_models[selected_model]
+            
+            # Initialize the OpenAI client
+            client = OpenAI(api_key=api_key)
+            
+            # Display model information once at the beginning
+            st.info(f"Using OpenAI model: {selected_model}")
+            
+            # Store the ticker for later use
+            st.session_state['ticker'] = ticker
+            
+            # Handle different filtering options
+            if quarter_input.strip():
+                # Quarter input takes precedence
+                accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
+                if not accessions:
+                    st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
+            elif year_input.strip():
+                try:
+                    years_back = int(year_input.strip())
+                    accessions = get_accessions(cik, ticker, years_back=years_back)
+                except:
+                    st.error("Invalid year input. Must be a number.")
+                    accessions = []
+            else:
+                # Default to most recent if neither input is provided
+                accessions = get_accessions(cik, ticker)
 
-                links = get_ex99_1_links(cik, accessions)
-                results = []
+            links = get_ex99_1_links(cik, accessions)
+            results = []
 
-                for date_str, acc, url in links:
-                    st.write(f"📄 Processing {url}")
-                    try:
-                        html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
-                        soup = BeautifulSoup(html, "html.parser")
+            for date_str, acc, url in links:
+                st.write(f"📄 Processing {url}")
+                try:
+                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    # Extract text while preserving structure
+                    text = soup.get_text(" ", strip=True)
+                    
+                    # Find paragraphs containing guidance patterns
+                    guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
+                    
+                    # Check if we found any guidance paragraphs
+                    if found_guidance:
+                        st.success(f"✅ Found potential guidance information.")
                         
-                        # Extract text while preserving structure
-                        text = soup.get_text(" ", strip=True)
-                        
-                        # Find paragraphs containing guidance patterns
-                        guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
-                        
-                        # Check if we found any guidance paragraphs
-                        if found_guidance:
-                            st.success(f"✅ Found potential guidance information.")
+                        # Extract guidance from the highlighted text using the selected model
+                        table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
+                    else:
+                        st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
+                        # Use a sample of the document to reduce token usage
+                        sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                        sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
+                        table = extract_guidance(sample_text, ticker, client, model_id)
+                    
+                    if table and "|" in table:
+                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                        if len(rows) > 1:  # Check if we have header and at least one row of data
+                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                             
-                            # Extract guidance from the highlighted text using the selected model
-                            table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
+                            # Store which rows have percentages or parenthetical values in the Value column
+                            percentage_rows = []
+                            parenthetical_rows = []
+                            for idx, row in df.iterrows():
+                                value_col = df.columns[1]  # Usually "Value"
+                                val_text = str(row[value_col])
+                                if '%' in val_text:
+                                    percentage_rows.append(idx)
+                                if '(' in val_text and ')' in val_text:
+                                    parenthetical_rows.append(idx)
+                            
+                            # Parse low, high, and average from Value column
+                            value_col = df.columns[1]
+                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                            
+                            # Apply special corrections for parenthetical values
+                            for idx in parenthetical_rows:
+                                for col in ['Low', 'High', 'Average']:
+                                    if col in df.columns and not pd.isnull(df.loc[idx, col]):
+                                        val = df.loc[idx, col]
+                                        if isinstance(val, (int, float)) and val > 0:
+                                            df.at[idx, col] = -abs(val)
+                            
+                            # Apply comprehensive sign correction based on context
+                            df = correct_value_signs(df)
+                            
+                            # Apply GAAP/non-GAAP split
+                            df = split_gaap_non_gaap(df)
+                            
+                            # Apply metric standardization - NEW STEP
+                            df = standardize_metrics(df)
+                            
+                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                            for idx in percentage_rows:
+                                # Add % to Low, High, Average columns
+                                for col in ['Low', 'High', 'Average']:
+                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                        df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                            
+                            # Apply a final consistency check to fix any remaining issues with negative ranges
+                            df = check_range_consistency(df)
+                            
+                            # Add metadata columns
+                            df["FilingDate"] = date_str
+                            df["8K_Link"] = url
+                            df["Model_Used"] = selected_model
+                            results.append(df)
+                            st.success("✅ Guidance extracted from this 8-K.")
                         else:
-                            st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
-                            # Use a sample of the document to reduce token usage
-                            sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
-                            paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-                            sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
-                            table = extract_guidance(sample_text, ticker, client, model_id)
-                        
-                        if table and "|" in table:
-                            rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                            if len(rows) > 1:  # Check if we have header and at least one row of data
-                                try:
-                                    df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
-                                    
-                                    # Store which rows have percentages or parenthetical values in the Value column
-                                    percentage_rows = []
-                                    parenthetical_rows = []
-                                    for idx, row in df.iterrows():
-                                        value_col = df.columns[1]  # Usually "Value"
-                                        val_text = str(row[value_col])
-                                        if '%' in val_text:
-                                            percentage_rows.append(idx)
-                                        if '(' in val_text and ')' in val_text:
-                                            parenthetical_rows.append(idx)
-                                    
-                                    # Parse low, high, and average from Value column
-                                    value_col = df.columns[1]
-                                    df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                                    
-                                    # Apply special corrections for parenthetical values
-                                    for idx in parenthetical_rows:
-                                        for col in ['Low', 'High', 'Average']:
-                                            if col in df.columns and not pd.isnull(df.loc[idx, col]):
-                                                val = df.loc[idx, col]
-                                                if isinstance(val, (int, float)) and val > 0:
-                                                    df.at[idx, col] = -abs(val)
-                                    
-                                    # Apply comprehensive sign correction based on context
-                                    df = correct_value_signs(df)
-                                    
-                                    # Apply GAAP/non-GAAP split
-                                    df = split_gaap_non_gaap(df)
-                                    
-                                    # Apply metric standardization
-                                    df = standardize_metrics(df)
-                                    
-                                    # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                                    for idx in percentage_rows:
-                                        # Add % to Low, High, Average columns
-                                        for col in ['Low', 'High', 'Average']:
-                                            if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                                df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                                    
-                                    # Apply a final consistency check to fix any remaining issues with negative ranges
-                                    df = check_range_consistency(df)
-                                    
-                                    # Add metadata columns
-                                    df["FilingDate"] = date_str
-                                    df["8K_Link"] = url
-                                    df["Model_Used"] = selected_model
-                                    results.append(df)
-                                    st.success("✅ Guidance extracted from this 8-K.")
-                                except Exception as e:
-                                    st.warning(f"⚠️ Error processing table data: {str(e)}")
-                                    st.text(table)  # Show the raw table for debugging
-                            else:
-                                st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
-                                
-                                # Show a sample of the text to help debug
-                                st.write("Sample of text sent to OpenAI:")
-                                sample_length = min(500, len(guidance_paragraphs))
-                                st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                        else:
-                            st.warning(f"⚠️ No guidance table found in {url}")
+                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
                             
                             # Show a sample of the text to help debug
                             st.write("Sample of text sent to OpenAI:")
                             sample_length = min(500, len(guidance_paragraphs))
                             st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                    except Exception as e:
-                        st.warning(f"Could not process: {url}. Error: {str(e)}")
+                    else:
+                        st.warning(f"⚠️ No guidance table found in {url}")
+                        
+                        # Show a sample of the text to help debug
+                        st.write("Sample of text sent to OpenAI:")
+                        sample_length = min(500, len(guidance_paragraphs))
+                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                except Exception as e:
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
 
-                # Replace your current Excel export code with this simplified version:
-
-if results:
-    try:
-        combined = pd.concat(results, ignore_index=True)
-        
-        # Preview the table
-        st.subheader("🔍 Preview of Extracted Guidance")
-        
-        # Define the desired columns for display
-        desired_cols = ["Metric", "Value", "Period"]
-        
-        # Add optional columns if they exist
-        optional_cols = ["PeriodType", "Low", "High", "Average", "FilingDate"]
-        for col in optional_cols:
-            if col in combined.columns:
-                desired_cols.append(col)
-        
-        # Check if we have at least some columns to display
-        if all(col in combined.columns for col in desired_cols[:3]):  # At least require the first 3 essential columns
-            display_df = combined[desired_cols]
-        else:
-            # Fallback to showing all columns if preferred columns aren't available
-            display_df = combined
-            st.warning("Some expected columns are missing from the results. Displaying all available columns.")
-        
-        # Display the table with formatting (no need to format values here - just show as is)
-        st.dataframe(display_df, use_container_width=True)
-        
-        # Add Excel download button - use a simple export without special formatting
-        try:
-            # Create Excel file in memory
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                combined.to_excel(writer, index=False, sheet_name='Guidance')
+            if results:
+                combined = pd.concat(results, ignore_index=True)
                 
-                # Access the workbook and set basic column widths
-                workbook = writer.book
-                worksheet = writer.sheets['Guidance']
+                # Apply GPT-based formatting improvements 
+                # (We still get advice on Excel formatting but now directly standardize the metrics)
+                if api_key:
+                    combined, formatting_advice = enhance_guidance_formatting(combined, client, model_id)
+                    
+                    # If GPT provided useful formatting advice, display implementation buttons
+                    if formatting_advice:
+                        st.info("💡 GPT provided Excel formatting advice to properly type numbers, percentages, and currency values")
+                        with st.expander("Show GPT Excel formatting recommendations"):
+                            st.write(formatting_advice)
                 
-                # Set a uniform column width for better readability
-                for col_idx in range(len(combined.columns)):
-                    worksheet.set_column(col_idx, col_idx, 15)
-            
-            excel_buffer.seek(0)
-            
-            # Provide download button
-            st.download_button(
-                "📥 Download Excel", 
-                data=excel_buffer.getvalue(), 
-                file_name=f"{ticker}_guidance_output.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-        except Exception as e:
-            st.error(f"Error preparing Excel download: {str(e)}")
-    except Exception as e:
-        st.error(f"Error processing results: {str(e)}")
-else:
-    st.warning("No guidance data extracted.")
+                # Preview the table
+                st.subheader("🔍 Preview of Extracted Guidance")
+                
+                # Select the most relevant columns for display
+                display_cols = ["Metric", "Value", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
+                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
+                
+                # Apply custom formatting when displaying
+                # Convert numeric columns to appropriate string formats
+                for col in ['Low', 'High', 'Average']:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(
+                            lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
+                                      any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
+                                      else format_dollar(x) if isinstance(x, (int, float)) and 
+                                      any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
+                                      else x)
+                        )
+                
+                # Display the table with formatting
+                st.dataframe(display_df, use_container_width=True)
+                
+                # Add download button with GPT-enhanced formatting note
+                excel_buffer = io.BytesIO()
+                combined.to_excel(excel_buffer, index=False)
+                st.download_button(
+                    "📥 Download Excel", 
+                    data=excel_buffer.getvalue(), 
+                    file_name=f"{ticker}_guidance_output.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Note: For better Excel formatting, implement the GPT suggestions above"
+                )
+            else:
+                st.warning("No guidance data extracted.")
