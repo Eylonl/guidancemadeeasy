@@ -554,9 +554,7 @@ def format_dataframe_for_excel(df):
         if col in excel_df.columns:
             # Convert percentage strings to numeric values (as decimals)
             excel_df[col] = excel_df[col].apply(
-                lambda x: float(str(x).replace('%', '')) / 100 if isinstance(x, str) and '%' in x 
-                else x/100 if isinstance(x, (int, float)) 
-                else x
+                lambda x: safe_percent_to_float(x)
             )
     
     # Process currency columns
@@ -564,12 +562,34 @@ def format_dataframe_for_excel(df):
         if col in excel_df.columns:
             # Convert currency strings to numeric values
             excel_df[col] = excel_df[col].apply(
-                lambda x: float(re.sub(r'[^\d.-]', '', str(x))) if isinstance(x, str) and '$' in x 
-                else x if isinstance(x, (int, float))
-                else x
+                lambda x: safe_currency_to_float(x)
             )
     
     return excel_df
+
+def safe_percent_to_float(x):
+    """Safely convert percentage string to float"""
+    try:
+        if isinstance(x, str) and '%' in x:
+            return float(re.sub(r'[^\d.-]', '', x)) / 100
+        elif isinstance(x, (int, float)):
+            return x / 100
+        else:
+            return x
+    except (ValueError, TypeError):
+        return x  # Return original value if conversion fails
+
+def safe_currency_to_float(x):
+    """Safely convert currency string to float"""
+    try:
+        if isinstance(x, str) and '$' in x:
+            return float(re.sub(r'[^\d.-]', '', x))
+        elif isinstance(x, (int, float)):
+            return x
+        else:
+            return x
+    except (ValueError, TypeError):
+        return x  # Return original value if conversion fails
 
 def enhance_guidance_formatting(df, client, model_name):
     """
