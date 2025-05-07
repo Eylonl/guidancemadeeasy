@@ -1141,7 +1141,7 @@ if st.button("🔍 Extract Guidance"):
                             # Apply GAAP/non-GAAP split
                             df = split_gaap_non_gaap(df)
                             
-                            # Apply metric standardization - NEW STEP
+                            # Apply metric standardization
                             df = standardize_metrics(df)
                             
                             # For rows that originally had % in the Value column, make sure Low, High, Average have % too
@@ -1180,16 +1180,9 @@ if st.button("🔍 Extract Guidance"):
             if results:
                 combined = pd.concat(results, ignore_index=True)
                 
-                # Apply GPT-based formatting improvements 
-                # (We still get advice on Excel formatting but now directly standardize the metrics)
+                # Still get GPT advice but don't display it
                 if api_key:
-                    combined, formatting_advice = enhance_guidance_formatting(combined, client, model_id)
-                    
-                    # If GPT provided useful formatting advice, display implementation buttons
-                    if formatting_advice:
-                        st.info("💡 GPT provided Excel formatting advice to properly type numbers, percentages, and currency values")
-                        with st.expander("Show GPT Excel formatting recommendations"):
-                            st.write(formatting_advice)
+                    combined, _ = enhance_guidance_formatting(combined, client, model_id)
                 
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
@@ -1213,15 +1206,17 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-                # Add download button with GPT-enhanced formatting note
+                # Format the dataframe for Excel
+                excel_df = format_dataframe_for_excel(combined)
+                
+                # Add download button
                 excel_buffer = io.BytesIO()
-                combined.to_excel(excel_buffer, index=False)
+                excel_df.to_excel(excel_buffer, index=False)
                 st.download_button(
                     "📥 Download Excel", 
                     data=excel_buffer.getvalue(), 
                     file_name=f"{ticker}_guidance_output.xlsx", 
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    help="Note: For better Excel formatting, implement the GPT suggestions above"
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
                 st.warning("No guidance data extracted.")
