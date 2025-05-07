@@ -519,59 +519,17 @@ def standardize_metrics(df):
     
     return df
 
-def format_dataframe_for_excel(df):
-    """
-    Function to properly format a dataframe for Excel export, ensuring numeric values
-    maintain their proper formatting types for export.
-    
-    Args:
-        df (DataFrame): The input dataframe to format
-        
-    Returns:
-        DataFrame: A new dataframe with appropriate formatting for Excel export
-    """
-    if df.empty:
-        return df
-        
-    excel_df = df.copy()
-    
-    # Identify percentage and currency columns
-    percentage_cols = []
-    currency_cols = []
-    
-    # First, identify what format should be applied to which columns
-    if 'Value' in excel_df.columns:
-        value_contains_percent = excel_df['Value'].astype(str).str.contains('%').any()
-        value_contains_dollar = excel_df['Value'].astype(str).str.contains('\$').any()
-        
-        if value_contains_percent:
-            percentage_cols.extend(['Low', 'High', 'Average'])
-        elif value_contains_dollar:
-            currency_cols.extend(['Low', 'High', 'Average'])
-    
-    # Process percentage columns
-    for col in percentage_cols:
-        if col in excel_df.columns:
-            # Convert percentage strings to numeric values (as decimals)
-            excel_df[col] = excel_df[col].apply(
-                lambda x: safe_percent_to_float(x)
-            )
-    
-    # Process currency columns
-    for col in currency_cols:
-        if col in excel_df.columns:
-            # Convert currency strings to numeric values
-            excel_df[col] = excel_df[col].apply(
-                lambda x: safe_currency_to_float(x)
-            )
-    
-    return excel_df
-
 def safe_percent_to_float(x):
     """Safely convert percentage string to float"""
+    if pd.isna(x):  # Handle NaN values
+        return x
     try:
         if isinstance(x, str) and '%' in x:
-            return float(re.sub(r'[^\d.-]', '', x)) / 100
+            # Remove non-numeric characters except for decimal points and negative signs
+            cleaned = re.sub(r'[^\d.-]', '', x)
+            if not cleaned:  # Handle case where cleaning results in empty string
+                return x
+            return float(cleaned) / 100
         elif isinstance(x, (int, float)):
             return x / 100
         else:
@@ -581,15 +539,81 @@ def safe_percent_to_float(x):
 
 def safe_currency_to_float(x):
     """Safely convert currency string to float"""
+    if pd.isna(x):  # Handle NaN values
+        return x
     try:
         if isinstance(x, str) and '$' in x:
-            return float(re.sub(r'[^\d.-]', '', x))
+            # Remove non-numeric characters except for decimal points and negative signs
+            cleaned = re.sub(r'[^\d.-]', '', x)
+            if not cleaned:  # Handle case where cleaning results in empty string
+                return x
+            return float(cleaned)
         elif isinstance(x, (int, float)):
             return x
         else:
             return x
     except (ValueError, TypeError):
         return x  # Return original value if conversion fails
+
+def format_dataframe_for_excel(df):
+    """
+    Function to properly format a dataframe for Excel export with improved error handling.
+    
+    Args:
+        df (DataFrame): The input dataframe to format
+        
+    Returns:
+        DataFrame: A new dataframe with appropriate formatting for Excel export
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()  # Return empty dataframe instead of None
+        
+    try:
+        excel_df = df.copy()
+        
+        # Identify percentage and currency columns
+        percentage_cols = []
+        currency_cols = []
+        
+        # First, identify what format should be applied to which columns
+        if 'Value' in excel_df.columns:
+            try:
+                value_contains_percent = excel_df['Value'].astype(str).str.contains('%').any()
+                value_contains_dollar = excel_df['Value'].astype(str).str.contains('\$').any()
+                
+                if value_contains_percent:
+                    percentage_cols.extend(['Low', 'High', 'Average'])
+                elif value_contains_dollar:
+                    currency_cols.extend(['Low', 'High', 'Average'])
+            except Exception:
+                # If there's an error checking Value column, skip formatting
+                pass
+        
+        # Process percentage columns
+        for col in percentage_cols:
+            if col in excel_df.columns:
+                try:
+                    # Convert percentage strings to numeric values (as decimals)
+                    excel_df[col] = excel_df[col].apply(safe_percent_to_float)
+                except Exception:
+                    # If there's an error processing this column, leave it as is
+                    pass
+        
+        # Process currency columns
+        for col in currency_cols:
+            if col in excel_df.columns:
+                try:
+                    # Convert currency strings to numeric values
+                    excel_df[col] = excel_df[col].apply(safe_currency_to_float)
+                except Exception:
+                    # If there's an error processing this column, leave it as is
+                    pass
+        
+        return excel_df
+        
+    except Exception:
+        # If any unexpected error occurs, return the original dataframe
+        return df
 
 def enhance_guidance_formatting(df, client, model_name):
     """
@@ -1070,229 +1094,235 @@ if st.button("🔍 Extract Guidance"):
         if not cik:
             st.error("CIK not found for ticker.")
         else:
-            # Get the selected model ID from the dropdown
-            model_id = openai_models[selected_model]
-            
-            # Initialize the OpenAI client
-            client = OpenAI(api_key=api_key)
-            
-            # Display model information once at the beginning
-            st.info(f"Using OpenAI model: {selected_model}")
-            
-            # Store the ticker for later use
-            st.session_state['ticker'] = ticker
-            
-            # Handle different filtering options
-            if quarter_input.strip():
-                # Quarter input takes precedence
-                accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
-                if not accessions:
-                    st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
-            elif year_input.strip():
-                try:
-                    years_back = int(year_input.strip())
-                    accessions = get_accessions(cik, ticker, years_back=years_back)
-                except:
-                    st.error("Invalid year input. Must be a number.")
-                    accessions = []
-            else:
-                # Default to most recent if neither input is provided
-                accessions = get_accessions(cik, ticker)
+            try:
+                # Get the selected model ID from the dropdown
+                model_id = openai_models[selected_model]
+                
+                # Initialize the OpenAI client
+                client = OpenAI(api_key=api_key)
+                
+                # Display model information once at the beginning
+                st.info(f"Using OpenAI model: {selected_model}")
+                
+                # Store the ticker for later use
+                st.session_state['ticker'] = ticker
+                
+                # Handle different filtering options
+                if quarter_input.strip():
+                    # Quarter input takes precedence
+                    accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
+                    if not accessions:
+                        st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
+                elif year_input.strip():
+                    try:
+                        years_back = int(year_input.strip())
+                        accessions = get_accessions(cik, ticker, years_back=years_back)
+                        if not accessions:
+                            st.warning(f"No 8-K filings found within the past {years_back} years.")
+                    except ValueError:
+                        st.error("Invalid year input. Must be a number.")
+                        accessions = []
+                else:
+                    # Default to most recent if neither input is provided
+                    accessions = get_accessions(cik, ticker)
+                    if not accessions:
+                        st.warning(f"No 8-K filings found for {ticker}.")
 
-            links = get_ex99_1_links(cik, accessions)
-            results = []
+                links = get_ex99_1_links(cik, accessions)
+                results = []
 
-            for date_str, acc, url in links:
-                st.write(f"📄 Processing {url}")
-                try:
-                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
-                    soup = BeautifulSoup(html, "html.parser")
-                    
-                    # Extract text while preserving structure
-                    text = soup.get_text(" ", strip=True)
-                    
-                    # Find paragraphs containing guidance patterns
-                    guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
-                    
-                    # Check if we found any guidance paragraphs
-                    if found_guidance:
-                        st.success(f"✅ Found potential guidance information.")
+                for date_str, acc, url in links:
+                    st.write(f"📄 Processing {url}")
+                    try:
+                        html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
+                        soup = BeautifulSoup(html, "html.parser")
                         
-                        # Extract guidance from the highlighted text using the selected model
-                        table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
-                    else:
-                        st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
-                        # Use a sample of the document to reduce token usage
-                        sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
-                        paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-                        sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
-                        table = extract_guidance(sample_text, ticker, client, model_id)
-                    
-                    if table and "|" in table:
-                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                        if len(rows) > 1:  # Check if we have header and at least one row of data
-                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                        # Extract text while preserving structure
+                        text = soup.get_text(" ", strip=True)
+                        
+                        # Find paragraphs containing guidance patterns
+                        guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
+                        
+                        # Check if we found any guidance paragraphs
+                        if found_guidance:
+                            st.success(f"✅ Found potential guidance information.")
                             
-                            # Store which rows have percentages or parenthetical values in the Value column
-                            percentage_rows = []
-                            parenthetical_rows = []
-                            for idx, row in df.iterrows():
-                                value_col = df.columns[1]  # Usually "Value"
-                                val_text = str(row[value_col])
-                                if '%' in val_text:
-                                    percentage_rows.append(idx)
-                                if '(' in val_text and ')' in val_text:
-                                    parenthetical_rows.append(idx)
-                            
-                            # Parse low, high, and average from Value column
-                            value_col = df.columns[1]
-                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                            
-                            # Apply special corrections for parenthetical values
-                            for idx in parenthetical_rows:
-                                for col in ['Low', 'High', 'Average']:
-                                    if col in df.columns and not pd.isnull(df.loc[idx, col]):
-                                        val = df.loc[idx, col]
-                                        if isinstance(val, (int, float)) and val > 0:
-                                            df.at[idx, col] = -abs(val)
-                            
-                            # Apply comprehensive sign correction based on context
-                            df = correct_value_signs(df)
-                            
-                            # Apply GAAP/non-GAAP split
-                            df = split_gaap_non_gaap(df)
-                            
-                            # Apply metric standardization - NEW STEP
-                            df = standardize_metrics(df)
-                            
-                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                            for idx in percentage_rows:
-                                # Add % to Low, High, Average columns
-                                for col in ['Low', 'High', 'Average']:
-                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                        df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                            
-                            # Apply a final consistency check to fix any remaining issues with negative ranges
-                            df = check_range_consistency(df)
-                            
-                            # Add metadata columns
-                            df["FilingDate"] = date_str
-                            df["8K_Link"] = url
-                            df["Model_Used"] = selected_model
-                            results.append(df)
-                            st.success("✅ Guidance extracted from this 8-K.")
+                            # Extract guidance from the highlighted text using the selected model
+                            table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
                         else:
-                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
+                            st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
+                            # Use a sample of the document to reduce token usage
+                            sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                            paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                            sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
+                            table = extract_guidance(sample_text, ticker, client, model_id)
+                        
+                        if table and "|" in table:
+                            rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                            if len(rows) > 1:  # Check if we have header and at least one row of data
+                                try:
+                                    df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                                    
+                                    # Store which rows have percentages or parenthetical values in the Value column
+                                    percentage_rows = []
+                                    parenthetical_rows = []
+                                    for idx, row in df.iterrows():
+                                        value_col = df.columns[1]  # Usually "Value"
+                                        val_text = str(row[value_col])
+                                        if '%' in val_text:
+                                            percentage_rows.append(idx)
+                                        if '(' in val_text and ')' in val_text:
+                                            parenthetical_rows.append(idx)
+                                    
+                                    # Parse low, high, and average from Value column
+                                    value_col = df.columns[1]
+                                    df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                                    
+                                    # Apply special corrections for parenthetical values
+                                    for idx in parenthetical_rows:
+                                        for col in ['Low', 'High', 'Average']:
+                                            if col in df.columns and not pd.isnull(df.loc[idx, col]):
+                                                val = df.loc[idx, col]
+                                                if isinstance(val, (int, float)) and val > 0:
+                                                    df.at[idx, col] = -abs(val)
+                                    
+                                    # Apply comprehensive sign correction based on context
+                                    df = correct_value_signs(df)
+                                    
+                                    # Apply GAAP/non-GAAP split
+                                    df = split_gaap_non_gaap(df)
+                                    
+                                    # Apply metric standardization
+                                    df = standardize_metrics(df)
+                                    
+                                    # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                                    for idx in percentage_rows:
+                                        # Add % to Low, High, Average columns
+                                        for col in ['Low', 'High', 'Average']:
+                                            if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                                df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                                    
+                                    # Apply a final consistency check to fix any remaining issues with negative ranges
+                                    df = check_range_consistency(df)
+                                    
+                                    # Add metadata columns
+                                    df["FilingDate"] = date_str
+                                    df["8K_Link"] = url
+                                    df["Model_Used"] = selected_model
+                                    results.append(df)
+                                    st.success("✅ Guidance extracted from this 8-K.")
+                                except Exception as e:
+                                    st.warning(f"⚠️ Error processing table data: {str(e)}")
+                                    st.text(table)  # Show the raw table for debugging
+                            else:
+                                st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
+                                
+                                # Show a sample of the text to help debug
+                                st.write("Sample of text sent to OpenAI:")
+                                sample_length = min(500, len(guidance_paragraphs))
+                                st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                        else:
+                            st.warning(f"⚠️ No guidance table found in {url}")
                             
                             # Show a sample of the text to help debug
                             st.write("Sample of text sent to OpenAI:")
                             sample_length = min(500, len(guidance_paragraphs))
                             st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                    else:
-                        st.warning(f"⚠️ No guidance table found in {url}")
+                    except Exception as e:
+                        st.warning(f"Could not process: {url}. Error: {str(e)}")
+
+                if results:
+                    try:
+                        combined = pd.concat(results, ignore_index=True)
                         
-                        # Show a sample of the text to help debug
-                        st.write("Sample of text sent to OpenAI:")
-                        sample_length = min(500, len(guidance_paragraphs))
-                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                except Exception as e:
-                    st.warning(f"Could not process: {url}. Error: {str(e)}")
-
-            # Replace this section in your code to safely display columns:
-
-# First, let's modify how you select display columns:
-if results:
-    combined = pd.concat(results, ignore_index=True)
-    
-    # Get formatting advice without displaying it to the user
-    combined, _ = enhance_guidance_formatting(combined, client, model_id)
-    
-    # Preview the table
-    st.subheader("🔍 Preview of Extracted Guidance")
-    
-    # Define the desired columns for display
-    desired_cols = ["Metric", "Value", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
-    
-    # Safely select only columns that exist in the dataframe
-    display_cols = [col for col in desired_cols if col in combined.columns]
-    
-    # Check if we have at least some columns to display
-    if display_cols:
-        display_df = combined[display_cols]
-    else:
-        # Fallback to showing all columns if preferred columns aren't available
-        display_df = combined
-        st.warning("Some expected columns are missing from the results. Displaying all available columns.")
-    
-    # Apply custom formatting when displaying
-    # Convert numeric columns to appropriate string formats
-    for col in ['Low', 'High', 'Average']:
-        if col in display_df.columns:
-            try:
-                display_df[col] = display_df[col].apply(
-                    lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
-                              any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
-                              else format_dollar(x) if isinstance(x, (int, float)) and 
-                              any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
-                              else x)
-                )
+                        # Get formatting advice without displaying it to the user
+                        combined, _ = enhance_guidance_formatting(combined, client, model_id)
+                        
+                        # Preview the table
+                        st.subheader("🔍 Preview of Extracted Guidance")
+                        
+                        # Define the desired columns for display
+                        desired_cols = ["Metric", "Value", "Period"]
+                        
+                        # Add optional columns if they exist
+                        optional_cols = ["PeriodType", "Low", "High", "Average", "FilingDate"]
+                        for col in optional_cols:
+                            if col in combined.columns:
+                                desired_cols.append(col)
+                        
+                        # Check if we have at least some columns to display
+                        if all(col in combined.columns for col in desired_cols[:3]):  # At least require the first 3 essential columns
+                            display_df = combined[desired_cols]
+                        else:
+                            # Fallback to showing all columns if preferred columns aren't available
+                            display_df = combined
+                            st.warning("Some expected columns are missing from the results. Displaying all available columns.")
+                        
+                        # Display the table with formatting (no need to format values here - just show as is)
+                        st.dataframe(display_df, use_container_width=True)
+                        
+                        # Prepare Excel export with proper formatting
+                        try:
+                            # Format the dataframe for Excel export
+                            excel_df = format_dataframe_for_excel(combined)
+                            
+                            # Add download button
+                            excel_buffer = io.BytesIO()
+                            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                excel_df.to_excel(writer, index=False, sheet_name='Guidance')
+                                
+                                # Access the XlsxWriter workbook and worksheet objects
+                                workbook = writer.book
+                                worksheet = writer.sheets['Guidance']
+                                
+                                # Create formats for percentages and currency
+                                percent_format = workbook.add_format({'num_format': '0.0%'})
+                                currency_format = workbook.add_format({'num_format': '$#,##0.00'})
+                                
+                                # Apply formats based on content - with robust error handling
+                                try:
+                                    for col_idx, col_name in enumerate(excel_df.columns):
+                                        if col_name in ['Low', 'High', 'Average']:
+                                            # Set column width
+                                            worksheet.set_column(col_idx, col_idx, 12)
+                                            
+                                            # Apply formatting based on the content pattern in the Value column
+                                            if 'Value' in excel_df.columns:  # Make sure Value column exists
+                                                try:
+                                                    if excel_df['Value'].astype(str).str.contains('%').any():
+                                                        worksheet.set_column(col_idx, col_idx, 12, percent_format)
+                                                    elif excel_df['Value'].astype(str).str.contains('\$').any():
+                                                        worksheet.set_column(col_idx, col_idx, 15, currency_format)
+                                                except Exception:
+                                                    # If formatting fails, just set the width without special formatting
+                                                    worksheet.set_column(col_idx, col_idx, 12)
+                                except Exception as e:
+                                    st.warning(f"Could not apply Excel column formatting: {str(e)}")
+                            
+                            excel_buffer.seek(0)
+                            
+                            st.download_button(
+                                "📥 Download Excel", 
+                                data=excel_buffer.getvalue(), 
+                                file_name=f"{ticker}_guidance_output.xlsx", 
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        except Exception as e:
+                            st.error(f"Error preparing Excel download: {str(e)}")
+                            # Provide a simpler CSV download as fallback
+                            try:
+                                csv = combined.to_csv(index=False)
+                                st.download_button(
+                                    "📥 Download CSV (Fallback)", 
+                                    data=csv, 
+                                    file_name=f"{ticker}_guidance_output.csv", 
+                                    mime="text/csv"
+                                )
+                            except Exception as csv_e:
+                                st.error(f"Could not create CSV fallback: {str(csv_e)}")
+                    except Exception as e:
+                        st.error(f"Error processing results: {str(e)}")
+                else:
+                    st.warning("No guidance data extracted.")
             except Exception as e:
-                st.warning(f"Could not format column {col}: {str(e)}")
-    
-    # Display the table with formatting
-    st.dataframe(display_df, use_container_width=True)
-    
-    # Prepare Excel export with proper formatting
-    try:
-        # Format the dataframe for Excel export using our improved function
-        excel_df = format_dataframe_for_excel(combined)
-        
-        # Add download button
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-            excel_df.to_excel(writer, index=False, sheet_name='Guidance')
-            
-            # Access the XlsxWriter workbook and worksheet objects
-            workbook = writer.book
-            worksheet = writer.sheets['Guidance']
-            
-            # Create formats for percentages and currency
-            percent_format = workbook.add_format({'num_format': '0.0%'})
-            currency_format = workbook.add_format({'num_format': '$#,##0.00'})
-            
-            # Apply formats based on content
-            for col_idx, col_name in enumerate(excel_df.columns):
-                if col_name in ['Low', 'High', 'Average']:
-                    # Set column width
-                    worksheet.set_column(col_idx, col_idx, 12)
-                    
-                    # Apply formatting based on the content pattern in the Value column
-                    if 'Value' in excel_df.columns:  # Make sure Value column exists
-                        if excel_df['Value'].astype(str).str.contains('%').any():
-                            worksheet.set_column(col_idx, col_idx, 12, percent_format)
-                        elif excel_df['Value'].astype(str).str.contains('\$').any():
-                            worksheet.set_column(col_idx, col_idx, 15, currency_format)
-        
-        excel_buffer.seek(0)
-        
-        st.download_button(
-            "📥 Download Excel", 
-            data=excel_buffer.getvalue(), 
-            file_name=f"{ticker}_guidance_output.xlsx", 
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    except Exception as e:
-        st.error(f"Error preparing Excel download: {str(e)}")
-        # Provide a simpler CSV download as fallback
-        try:
-            csv = combined.to_csv(index=False)
-            st.download_button(
-                "📥 Download CSV (Fallback)", 
-                data=csv, 
-                file_name=f"{ticker}_guidance_output.csv", 
-                mime="text/csv"
-            )
-        except Exception as csv_e:
-            st.error(f"Could not create CSV fallback: {str(csv_e)}")
-else:
-    st.warning("No guidance data extracted.")
+                st.error(f"An error occurred: {str(e)}")
