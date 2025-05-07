@@ -452,6 +452,74 @@ def split_gaap_non_gaap(df):
             rows.append(row)
     return pd.DataFrame(rows)
 
+def standardize_metrics(df):
+    """
+    Standardizes metric names in the guidance dataframe
+    """
+    if 'Metric' not in df.columns:
+        return df  # Skip if Metric column is missing
+    
+    # Create a mapping of common variations to standardized names
+    metric_mapping = {
+        # EPS variations
+        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(earnings per share|eps|net income per share|per share|income per share)\b.*': 'Non-GAAP EPS',
+        r'(?i).*\b(gaap)\b.*\b(earnings per share|eps|net income per share|per share|income per share)\b.*': 'GAAP EPS',
+        r'(?i).*\b(earnings per share|eps|per share|net income per share|income per share)\b.*': 'EPS',
+        
+        # Revenue variations
+        r'(?i).*\b(total revenue|revenue|net revenue|consolidated revenue)\b.*': 'Revenue',
+        
+        # Income variations
+        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(operating income|income from operations)\b.*': 'Non-GAAP Operating Income',
+        r'(?i).*\b(gaap)\b.*\b(operating income|income from operations)\b.*': 'GAAP Operating Income',
+        r'(?i).*\b(operating income|income from operations)\b.*': 'Operating Income',
+        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(net income|profit|earnings)\b.*': 'Non-GAAP Net Income',
+        r'(?i).*\b(gaap)\b.*\b(net income|profit|earnings)\b.*': 'GAAP Net Income',
+        r'(?i).*\b(net income|profit|earnings)\b.*': 'Net Income',
+        
+        # Margin variations
+        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(operating margin)\b.*': 'Non-GAAP Operating Margin',
+        r'(?i).*\b(gaap)\b.*\b(operating margin)\b.*': 'GAAP Operating Margin',
+        r'(?i).*\b(operating margin)\b.*': 'Operating Margin',
+        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(gross margin)\b.*': 'Non-GAAP Gross Margin',
+        r'(?i).*\b(gaap)\b.*\b(gross margin)\b.*': 'GAAP Gross Margin',
+        r'(?i).*\b(gross margin)\b.*': 'Gross Margin',
+        r'(?i).*\b(profit margin|net margin)\b.*': 'Profit Margin',
+        
+        # Cash flow variations
+        r'(?i).*\b(free cash flow|fcf)\b.*': 'Free Cash Flow',
+        r'(?i).*\b(operating cash flow|cash flow from operations)\b.*': 'Operating Cash Flow',
+        
+        # EBITDA variations
+        r'(?i).*\b(adjusted ebitda|adj\.? ebitda)\b.*': 'Adj. EBITDA',
+        r'(?i).*\b(ebitda)\b.*': 'EBITDA',
+        
+        # Growth variations
+        r'(?i).*\b(revenue growth|growth rate)\b.*': 'Revenue Growth',
+        
+        # Tax rate variations
+        r'(?i).*\b(tax rate|effective tax rate)\b.*': 'Tax Rate',
+        
+        # Capex variations
+        r'(?i).*\b(capital expenditures|capex)\b.*': 'Capital Expenditures',
+    }
+    
+    # Apply the standardization
+    for idx, row in df.iterrows():
+        original_metric = row['Metric']
+        standardized_metric = original_metric  # Default to original
+        
+        # Try to match against patterns
+        for pattern, standard_name in metric_mapping.items():
+            if re.match(pattern, original_metric):
+                standardized_metric = standard_name
+                break
+                
+        # Update the metric name
+        df.at[idx, 'Metric'] = standardized_metric
+    
+    return df
+
 def enhance_guidance_formatting(df, client, model_name):
     """
     Function to improve the formatting and standardization of guidance data
@@ -604,7 +672,6 @@ Respond in table format without commentary.\n\n{text}"""
         st.warning(f"⚠️ Error extracting guidance: {str(e)}")
         return None
 
-# Guidance paragraph extraction
 def find_guidance_paragraphs(text):
     """
     Extract paragraphs from text that are likely to contain guidance information.
@@ -973,6 +1040,7 @@ def get_ex99_1_links(cik, accessions):
                     links.append((date_str, accession, base_folder + filename))
                     break
     return links
+
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -1073,6 +1141,9 @@ if st.button("🔍 Extract Guidance"):
                             # Apply GAAP/non-GAAP split
                             df = split_gaap_non_gaap(df)
                             
+                            # Apply metric standardization - NEW STEP
+                            df = standardize_metrics(df)
+                            
                             # For rows that originally had % in the Value column, make sure Low, High, Average have % too
                             for idx in percentage_rows:
                                 # Add % to Low, High, Average columns
@@ -1109,16 +1180,16 @@ if st.button("🔍 Extract Guidance"):
             if results:
                 combined = pd.concat(results, ignore_index=True)
                 
-                # Apply GPT-based formatting improvements if possible
+                # Apply GPT-based formatting improvements 
+                # (We still get advice on Excel formatting but now directly standardize the metrics)
                 if api_key:
                     combined, formatting_advice = enhance_guidance_formatting(combined, client, model_id)
                     
                     # If GPT provided useful formatting advice, display implementation buttons
                     if formatting_advice:
-                        if st.button("📊 Apply GPT Formatting Suggestions"):
-                            st.info("This would apply the suggested formatting code from GPT")
-                            # In a production version, this would execute the code snippets extracted from GPT's response
-                            # For safety, we're just showing a message here
+                        st.info("💡 GPT provided Excel formatting advice to properly type numbers, percentages, and currency values")
+                        with st.expander("Show GPT Excel formatting recommendations"):
+                            st.write(formatting_advice)
                 
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
