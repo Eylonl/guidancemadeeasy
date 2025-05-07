@@ -425,6 +425,9 @@ def check_range_consistency(df):
                             df.at[idx, 'Average'] = avg
                     else:
                         df.at[idx, 'Average'] = avg
+        
+        # Other range consistency checks...
+        # (continuing with other checks from the original function)
     
     return df
 
@@ -449,91 +452,6 @@ def split_gaap_non_gaap(df):
         else:
             rows.append(row)
     return pd.DataFrame(rows)
-
-def standardize_metrics(df):
-    """
-    Standardize metric names to consistent format.
-    Maps various financial metric variations to standard labels.
-    """
-    if 'Metric' not in df.columns:
-        return df  # Return unchanged if no Metric column
-    
-    # Create a dictionary to map patterns to standardized metric names
-    metric_patterns = {
-        # EPS PATTERNS
-        'Non-GAAP EPS': [
-            r'(?i).*non[\s-]*gaap.*(?:eps|earnings per share|per share|income per share).*',
-            r'(?i).*adjusted.*(?:eps|earnings per share|per share|income per share).*',
-        ],
-        'GAAP EPS': [
-            r'(?i).*gaap.*(?:eps|earnings per share|per share|income per share).*',
-            r'(?i)^(?:eps|earnings per share|per share|income per share).*',
-            r'(?i).*net income per share.*',
-            r'(?i).*diluted (?:eps|earnings per share).*',
-        ],
-        
-        # REVENUE PATTERNS
-        'Revenue': [
-            r'(?i).*revenue.*',
-            r'(?i).*sales.*',
-        ],
-        
-        # OPERATING INCOME PATTERNS
-        'Non-GAAP Operating Income': [
-            r'(?i).*non[\s-]*gaap.*operating[\s-]*(?:income|profit).*',
-            r'(?i).*adjusted.*operating[\s-]*(?:income|profit).*',
-        ],
-        'GAAP Operating Income': [
-            r'(?i).*operating[\s-]*(?:income|profit).*',
-            r'(?i).*income[\s-]*from[\s-]*operations.*',
-        ],
-        
-        # NET INCOME PATTERNS
-        'Non-GAAP Net Income': [
-            r'(?i).*non[\s-]*gaap.*net[\s-]*(?:income|profit|earnings).*',
-            r'(?i).*adjusted.*net[\s-]*(?:income|profit|earnings).*',
-        ],
-        'GAAP Net Income': [
-            r'(?i).*gaap.*net[\s-]*(?:income|profit|earnings).*',
-            r'(?i)^(?:net[\s-]*income|net[\s-]*profit|net[\s-]*earnings).*',
-        ],
-        
-        # MARGIN PATTERNS
-        'Non-GAAP Operating Margins': [
-            r'(?i).*non[\s-]*gaap.*operating[\s-]*margin.*',
-            r'(?i).*adjusted.*operating[\s-]*margin.*',
-        ],
-        'GAAP Operating Margins': [
-            r'(?i).*gaap.*operating[\s-]*margin.*',
-            r'(?i)^operating[\s-]*margin.*',
-        ],
-        'Gross Margins': [
-            r'(?i).*gross[\s-]*margin.*',
-        ],
-        
-        # OTHER METRICS
-        'Adj. EBITDA': [
-            r'(?i).*adjusted.*ebitda.*',
-            r'(?i).*adj.*ebitda.*',
-        ],
-        'Free Cash Flow': [
-            r'(?i).*free[\s-]*cash[\s-]*flow.*',
-            r'(?i).*fcf.*',
-        ],
-    }
-    
-    # Function to find the standardized metric name based on patterns
-    def find_standardized_metric(metric_name):
-        for standard_name, patterns in metric_patterns.items():
-            for pattern in patterns:
-                if re.search(pattern, metric_name):
-                    return standard_name
-        return metric_name  # Return original if no match
-    
-    # Apply standardization to the Metric column
-    df['Metric'] = df['Metric'].apply(find_standardized_metric)
-    
-    return df
 
 def extract_guidance(text, ticker, client, model_name):
     """
@@ -1106,9 +1024,6 @@ if st.button("🔍 Extract Guidance"):
                             
                             # Apply a final consistency check to fix any remaining issues with negative ranges
                             df = check_range_consistency(df)
-                            
-                            # Apply metric standardization
-                            df = standardize_metrics(df)
                             
                             # Add metadata columns
                             df["FilingDate"] = date_str
