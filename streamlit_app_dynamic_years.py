@@ -1228,98 +1228,63 @@ if st.button("🔍 Extract Guidance"):
                     except Exception as e:
                         st.warning(f"Could not process: {url}. Error: {str(e)}")
 
-                if results:
-                    try:
-                        combined = pd.concat(results, ignore_index=True)
-                        
-                        # Get formatting advice without displaying it to the user
-                        combined, _ = enhance_guidance_formatting(combined, client, model_id)
-                        
-                        # Preview the table
-                        st.subheader("🔍 Preview of Extracted Guidance")
-                        
-                        # Define the desired columns for display
-                        desired_cols = ["Metric", "Value", "Period"]
-                        
-                        # Add optional columns if they exist
-                        optional_cols = ["PeriodType", "Low", "High", "Average", "FilingDate"]
-                        for col in optional_cols:
-                            if col in combined.columns:
-                                desired_cols.append(col)
-                        
-                        # Check if we have at least some columns to display
-                        if all(col in combined.columns for col in desired_cols[:3]):  # At least require the first 3 essential columns
-                            display_df = combined[desired_cols]
-                        else:
-                            # Fallback to showing all columns if preferred columns aren't available
-                            display_df = combined
-                            st.warning("Some expected columns are missing from the results. Displaying all available columns.")
-                        
-                        # Display the table with formatting (no need to format values here - just show as is)
-                        st.dataframe(display_df, use_container_width=True)
-                        
-                        # Prepare Excel export with proper formatting
-                        try:
-                            # Format the dataframe for Excel export
-                            excel_df = format_dataframe_for_excel(combined)
-                            
-                            # Add download button
-                            excel_buffer = io.BytesIO()
-                            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                                excel_df.to_excel(writer, index=False, sheet_name='Guidance')
-                                
-                                # Access the XlsxWriter workbook and worksheet objects
-                                workbook = writer.book
-                                worksheet = writer.sheets['Guidance']
-                                
-                                # Create formats for percentages and currency
-                                percent_format = workbook.add_format({'num_format': '0.0%'})
-                                currency_format = workbook.add_format({'num_format': '$#,##0.00'})
-                                
-                                # Apply formats based on content - with robust error handling
-                                try:
-                                    for col_idx, col_name in enumerate(excel_df.columns):
-                                        if col_name in ['Low', 'High', 'Average']:
-                                            # Set column width
-                                            worksheet.set_column(col_idx, col_idx, 12)
-                                            
-                                            # Apply formatting based on the content pattern in the Value column
-                                            if 'Value' in excel_df.columns:  # Make sure Value column exists
-                                                try:
-                                                    if excel_df['Value'].astype(str).str.contains('%').any():
-                                                        worksheet.set_column(col_idx, col_idx, 12, percent_format)
-                                                    elif excel_df['Value'].astype(str).str.contains('\$').any():
-                                                        worksheet.set_column(col_idx, col_idx, 15, currency_format)
-                                                except Exception:
-                                                    # If formatting fails, just set the width without special formatting
-                                                    worksheet.set_column(col_idx, col_idx, 12)
-                                except Exception as e:
-                                    st.warning(f"Could not apply Excel column formatting: {str(e)}")
-                            
-                            excel_buffer.seek(0)
-                            
-                            st.download_button(
-                                "📥 Download Excel", 
-                                data=excel_buffer.getvalue(), 
-                                file_name=f"{ticker}_guidance_output.xlsx", 
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                        except Exception as e:
-                            st.error(f"Error preparing Excel download: {str(e)}")
-                            # Provide a simpler CSV download as fallback
-                            try:
-                                csv = combined.to_csv(index=False)
-                                st.download_button(
-                                    "📥 Download CSV (Fallback)", 
-                                    data=csv, 
-                                    file_name=f"{ticker}_guidance_output.csv", 
-                                    mime="text/csv"
-                                )
-                            except Exception as csv_e:
-                                st.error(f"Could not create CSV fallback: {str(csv_e)}")
-                    except Exception as e:
-                        st.error(f"Error processing results: {str(e)}")
-                else:
-                    st.warning("No guidance data extracted.")
-            except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
+                # Replace your current Excel export code with this simplified version:
+
+if results:
+    try:
+        combined = pd.concat(results, ignore_index=True)
+        
+        # Preview the table
+        st.subheader("🔍 Preview of Extracted Guidance")
+        
+        # Define the desired columns for display
+        desired_cols = ["Metric", "Value", "Period"]
+        
+        # Add optional columns if they exist
+        optional_cols = ["PeriodType", "Low", "High", "Average", "FilingDate"]
+        for col in optional_cols:
+            if col in combined.columns:
+                desired_cols.append(col)
+        
+        # Check if we have at least some columns to display
+        if all(col in combined.columns for col in desired_cols[:3]):  # At least require the first 3 essential columns
+            display_df = combined[desired_cols]
+        else:
+            # Fallback to showing all columns if preferred columns aren't available
+            display_df = combined
+            st.warning("Some expected columns are missing from the results. Displaying all available columns.")
+        
+        # Display the table with formatting (no need to format values here - just show as is)
+        st.dataframe(display_df, use_container_width=True)
+        
+        # Add Excel download button - use a simple export without special formatting
+        try:
+            # Create Excel file in memory
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                combined.to_excel(writer, index=False, sheet_name='Guidance')
+                
+                # Access the workbook and set basic column widths
+                workbook = writer.book
+                worksheet = writer.sheets['Guidance']
+                
+                # Set a uniform column width for better readability
+                for col_idx in range(len(combined.columns)):
+                    worksheet.set_column(col_idx, col_idx, 15)
+            
+            excel_buffer.seek(0)
+            
+            # Provide download button
+            st.download_button(
+                "📥 Download Excel", 
+                data=excel_buffer.getvalue(), 
+                file_name=f"{ticker}_guidance_output.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+        except Exception as e:
+            st.error(f"Error preparing Excel download: {str(e)}")
+    except Exception as e:
+        st.error(f"Error processing results: {str(e)}")
+else:
+    st.warning("No guidance data extracted.")
