@@ -6,173 +6,6 @@ from openai import OpenAI
 import pandas as pd
 import os
 import re
-import io
-
-# ─── UI SETUP ─────────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="SEC 8-K Guidance Extractor",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS to improve UI appearance
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #0e4da4;
-    }
-    .section-header {
-        font-size: 1.5rem;
-        color: #0e4da4;
-        margin-top: 1rem;
-    }
-    .instruction-text {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 1rem;
-    }
-    .success-box {
-        background-color: #d4edda;
-        color: #155724;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 1rem;
-    }
-    .warning-box {
-        background-color: #fff3cd;
-        color: #856404;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 1rem;
-    }
-    .error-box {
-        background-color: #f8d7da;
-        color: #721c24;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 1rem;
-    }
-    .info-box {
-        background-color: #d1ecf1;
-        color: #0c5460;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 1rem;
-    }
-    .stButton > button {
-        background-color: #0e4da4;
-        color: white;
-        font-weight: bold;
-    }
-    .small-text {
-        font-size: 0.8rem;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Main title with custom styling
-st.markdown("<h1 class='main-header'>📄 SEC 8-K Guidance Extractor</h1>", unsafe_allow_html=True)
-
-# Introduction text
-st.markdown("""
-<div class="instruction-text">
-    <p>This tool extracts forward-looking guidance and projections from SEC 8-K filings. 
-    It analyzes earnings releases to find financial forecasts and categorizes them by time period (Quarter/Full Year).</p>
-    
-    <p><strong>How it works:</strong></p>
-    <ol>
-        <li>Enter a stock ticker (e.g., MSFT, AAPL)</li>
-        <li>Provide your OpenAI API key (required for AI-powered text analysis)</li>
-        <li>Choose how to filter 8-K filings (most recent, specific quarter, or years back)</li>
-        <li>Click "Extract Guidance" to begin processing</li>
-    </ol>
-</div>
-""", unsafe_allow_html=True)
-
-# Create a two-column layout for inputs
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("<h2 class='section-header'>📋 Basic Information</h2>", unsafe_allow_html=True)
-    ticker = st.text_input("Enter Stock Ticker", "MSFT", help="Company stock symbol (e.g., MSFT for Microsoft)").upper()
-    api_key = st.text_input("OpenAI API Key", type="password", help="Your OpenAI API key for text analysis")
-
-with col2:
-    st.markdown("<h2 class='section-header'>⚙️ Model Settings</h2>", unsafe_allow_html=True)
-    # Model selection with more information
-    openai_models = {
-        "GPT-4 Turbo": "gpt-4-turbo-preview",
-        "GPT-4": "gpt-4",
-        "GPT-3.5 Turbo": "gpt-3.5-turbo"
-    }
-    
-    model_help = """
-    • GPT-4 Turbo: Best accuracy, recommended for complex earnings reports
-    • GPT-4: High accuracy, good balance of performance and speed
-    • GPT-3.5 Turbo: Fastest option, suitable for simpler reports
-    """
-    
-    selected_model = st.selectbox(
-        "Select OpenAI Model",
-        list(openai_models.keys()),
-        index=0,  # Default to GPT-4 Turbo
-        help=model_help
-    )
-
-# Filing selection section
-st.markdown("<h2 class='section-header'>📅 Filing Selection</h2>", unsafe_allow_html=True)
-st.markdown("""
-<div class="instruction-text">
-    <p>Choose <strong>ONE</strong> of the following options to select which 8-K filings to analyze:</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Options for selecting filings in a more organized way
-filing_option = st.radio(
-    "Select which 8-K filings to analyze:",
-    ["Most recent only", "Specific quarter", "Years back"],
-    help="Choose how to filter 8-K filings"
-)
-
-if filing_option == "Most recent only":
-    quarter_input = ""
-    year_input = ""
-    st.info("Will retrieve only the most recent 8-K filing.")
-    
-elif filing_option == "Specific quarter":
-    quarter_help = """
-    Examples:
-    • Q2 FY24 (Quarter 2 of Fiscal Year 2024)
-    • 3Q25 (Quarter 3 of 2025)
-    • Q1 2024 (Quarter 1 of 2024)
-    """
-    quarter_input = st.text_input("Enter specific quarter (e.g., Q1 FY24, 2Q25)", help=quarter_help)
-    year_input = ""
-    
-elif filing_option == "Years back":
-    year_input = st.text_input("How many years back to search?", "1", help="Enter a number (e.g., 1, 2, 3)")
-    quarter_input = ""
-    st.info(f"Will retrieve 8-K filings from the past {year_input} years.")
-
-# Custom message functions
-def custom_success(text):
-    """Display a custom success message"""
-    st.markdown(f'<div class="success-box">{text}</div>', unsafe_allow_html=True)
-
-def custom_warning(text):
-    """Display a custom warning message"""
-    st.markdown(f'<div class="warning-box">{text}</div>', unsafe_allow_html=True)
-
-def custom_error(text):
-    """Display a custom error message"""
-    st.markdown(f'<div class="error-box">{text}</div>', unsafe_allow_html=True)
-
-def custom_info(text):
-    """Display a custom info message"""
-    st.markdown(f'<div class="info-box">{text}</div>', unsafe_allow_html=True)
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
@@ -203,7 +36,7 @@ def extract_number(token: str):
     
     # Remove parentheses, dollar signs, and commas for numerical processing
     tok = original_token.replace('(', '').replace(')', '').replace('$','') \
-                       .replace(',', '').replace('-', '').replace('+', '').strip().lower()
+                        .replace(',', '').replace('-', '').replace('+', '').strip().lower()
     
     # Convert billions to millions (multiply by 1000)
     factor = 1.0
@@ -900,10 +733,6 @@ def check_range_consistency(df):
     return df
 
 def split_gaap_non_gaap(df):
-    """
-    Identifies and splits rows with both GAAP and non-GAAP measures into separate rows.
-    This makes the data cleaner and easier to analyze.
-    """
     if 'Value' not in df.columns or 'Metric' not in df.columns:
         return df  # Avoid crash if column names are missing
 
@@ -923,24 +752,40 @@ def split_gaap_non_gaap(df):
                 rows.append(new_row)
         else:
             rows.append(row)
-    
     return pd.DataFrame(rows)
 
-# SEC filing retrieval functions
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
+
+# Inputs
+ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+# Add model selection dropdown
+openai_models = {
+    "GPT-4 Turbo": "gpt-4-turbo-preview",
+    "GPT-4": "gpt-4",
+    "GPT-3.5 Turbo": "gpt-3.5-turbo"
+}
+selected_model = st.selectbox(
+    "Select OpenAI Model",
+    list(openai_models.keys()),
+    index=0  # Default to first option (GPT-4 Turbo)
+)
+
+# Both filter options displayed at the same time
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
+
+
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
-    """Lookup CIK number for a ticker symbol"""
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
-    try:
-        res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
-        data = res.json()
-        for entry in data.values():
-            if entry["ticker"].upper() == ticker:
-                return str(entry["cik_str"]).zfill(10)
-        return None
-    except Exception as e:
-        custom_error(f"Error looking up CIK: {str(e)}")
-        return None
+    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+    data = res.json()
+    for entry in data.values():
+        if entry["ticker"].upper() == ticker:
+            return str(entry["cik_str"]).zfill(10)
 
 
 def get_fiscal_year_end(ticker, cik):
@@ -962,16 +807,16 @@ def get_fiscal_year_end(ticker, cik):
                 day = int(fiscal_year_end[2:])
                 
                 month_name = datetime(2000, month, 1).strftime('%B')
-                custom_success(f"✅ Retrieved fiscal year end for {ticker}: {month_name} {day}")
+                st.success(f"✅ Retrieved fiscal year end for {ticker}: {month_name} {day}")
                 
                 return month, day
         
         # If not found, default to December 31 (calendar year)
-        custom_warning(f"⚠️ Could not determine fiscal year end for {ticker} from SEC data. Using December 31 (calendar year).")
+        st.warning(f"⚠️ Could not determine fiscal year end for {ticker} from SEC data. Using December 31 (calendar year).")
         return 12, 31
         
     except Exception as e:
-        custom_warning(f"⚠️ Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
+        st.warning(f"⚠️ Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
         return 12, 31
 
 
@@ -1012,7 +857,7 @@ def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fisca
     
     # Get the specified quarter
     if quarter_num < 1 or quarter_num > 4:
-        custom_error(f"Invalid quarter number: {quarter_num}. Must be 1-4.")
+        st.error(f"Invalid quarter number: {quarter_num}. Must be 1-4.")
         return None
         
     quarter_info = quarters[quarter_num]
@@ -1032,9 +877,13 @@ def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fisca
         
         if start_month >= fiscal_year_start_month:
             # This quarter starts in the previous calendar year
+            # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
+            # Q1 (Jul-Sep) and Q2 (Oct-Dec) start in calendar year 2023
             start_calendar_year = year_num - 1
         else:
             # This quarter starts in the current calendar year
+            # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
+            # Q3 (Jan-Mar) and Q4 (Apr-Jun) start in calendar year 2024
             start_calendar_year = year_num
     
     # For quarters that span calendar years, the end date is in the next calendar year
@@ -1069,15 +918,13 @@ def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fisca
     expected_report = f"~{report_start.strftime('%B %d, %Y')} to {report_end.strftime('%B %d, %Y')}"
     
     # Display fiscal quarter information
-    custom_info(f"Fiscal year ends in {datetime(2000, fiscal_year_end_month, 1).strftime('%B')} {fiscal_year_end_day}")
-    custom_info(f"Quarter {quarter_num} spans: {datetime(2000, start_month, 1).strftime('%B')}-{datetime(2000, end_month, 1).strftime('%B')}")
+    st.write(f"Fiscal year ends in {datetime(2000, fiscal_year_end_month, 1).strftime('%B')} {fiscal_year_end_day}")
+    st.write(f"Quarter {quarter_num} spans: {datetime(2000, start_month, 1).strftime('%B')}-{datetime(2000, end_month, 1).strftime('%B')}")
     
     # Show all quarters
-    quarter_info = "<div class='info-box'>All quarters for this fiscal pattern:<ul>"
+    st.write("All quarters for this fiscal pattern:")
     for q, q_info in quarters.items():
-        quarter_info += f"<li>Q{q}: {datetime(2000, q_info['start_month'], 1).strftime('%B')}-{datetime(2000, q_info['end_month'], 1).strftime('%B')}</li>"
-    quarter_info += "</ul></div>"
-    st.markdown(quarter_info, unsafe_allow_html=True)
+        st.write(f"Q{q}: {datetime(2000, q_info['start_month'], 1).strftime('%B')}-{datetime(2000, q_info['end_month'], 1).strftime('%B')}")
     
     return {
         'quarter_period': quarter_period,
@@ -1092,140 +939,117 @@ def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fisca
 
 def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
     """General function for finding filings"""
-    try:
-        headers = {'User-Agent': 'Your Name Contact@domain.com'}
-        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        resp = requests.get(url, headers=headers)
-        data = resp.json()
-        filings = data["filings"]["recent"]
-        accessions = []
+    headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+    resp = requests.get(url, headers=headers)
+    data = resp.json()
+    filings = data["filings"]["recent"]
+    accessions = []
+    
+    # Auto-detect fiscal year end from SEC data
+    fiscal_year_end_month, fiscal_year_end_day = get_fiscal_year_end(ticker, cik)
+    
+    if years_back:
+        # Modified to add one extra quarter (approximately 91.25 days)
+        # For example: 1 year = 365 + 91.25 days = 456.25 days
+        cutoff = datetime.today() - timedelta(days=(365 * years_back) + 91.25)
         
-        # Auto-detect fiscal year end from SEC data
-        fiscal_year_end_month, fiscal_year_end_day = get_fiscal_year_end(ticker, cik)
+        st.write(f"Looking for filings from the past {years_back} years plus 1 quarter (from {cutoff.strftime('%Y-%m-%d')} to present)")
         
-        if years_back:
-            # Modified to add one extra quarter (approximately 91.25 days)
-            # For example: 1 year = 365 + 91.25 days = 456.25 days
-            cutoff = datetime.today() - timedelta(days=(365 * years_back) + 91.25)
+        for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+            if form == "8-K":
+                date = datetime.strptime(date_str, "%Y-%m-%d")
+                if date >= cutoff:
+                    accessions.append((accession, date_str))
+    
+    elif specific_quarter:
+        # Parse quarter and year from input - handle various formats
+        # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
+        match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:\s*FY\s*|\s*)?(\d{2}|\d{4})', specific_quarter.upper())
+        if match:
+            quarter = match.group(1) or match.group(2)
+            year = match.group(3)
             
-            custom_info(f"Looking for filings from the past {years_back} years plus 1 quarter (from {cutoff.strftime('%Y-%m-%d')} to present)")
+            # Convert 2-digit year to 4-digit year
+            if len(year) == 2:
+                year = '20' + year
+                
+            quarter_num = int(quarter)
+            year_num = int(year)
             
+            # Get fiscal dates based on fiscal year end month
+            fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day)
+            
+            if not fiscal_info:
+                return []
+            
+            # Display fiscal quarter information
+            st.write(f"Looking for {ticker} {fiscal_info['quarter_period']} filings")
+            st.write(f"Fiscal quarter period: {fiscal_info['period_description']}")
+            st.write(f"Expected earnings reporting window: {fiscal_info['expected_report']}")
+            
+            # We want to find filings around the expected earnings report date
+            start_date = fiscal_info['report_start'] - timedelta(days=15)  # Include potential early reports
+            end_date = fiscal_info['report_end'] + timedelta(days=15)  # Include potential late reports
+            
+            st.write(f"Searching for filings between: {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}")
+            
+            # Find filings in this date range
             for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
                 if form == "8-K":
                     date = datetime.strptime(date_str, "%Y-%m-%d")
-                    if date >= cutoff:
+                    if start_date <= date <= end_date:
                         accessions.append((accession, date_str))
+                        st.write(f"Found filing from {date_str}: {accession}")
+    
+    else:  # Default: most recent only
+        for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
+            if form == "8-K":
+                accessions.append((accession, date_str))
+                break
+    
+    # Show debug info about the selected accessions
+    if accessions:
+        st.write(f"Found {len(accessions)} relevant 8-K filings")
+    else:
+        # Show all available dates for reference
+        available_dates = []
+        for form, date_str in zip(filings["form"], filings["filingDate"]):
+            if form == "8-K":
+                available_dates.append(date_str)
         
-        elif specific_quarter:
-            # Parse quarter and year from input - handle various formats
-            # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
-            match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:\s*FY\s*|\s*)?(\d{2}|\d{4})', specific_quarter.upper())
-            if match:
-                quarter = match.group(1) or match.group(2)
-                year = match.group(3)
-                
-                # Convert 2-digit year to 4-digit year
-                if len(year) == 2:
-                    year = '20' + year
-                    
-                quarter_num = int(quarter)
-                year_num = int(year)
-                
-                # Get fiscal dates based on fiscal year end month
-                fiscal_info = get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day)
-                
-                if not fiscal_info:
-                    return []
-                
-                # Display fiscal quarter information
-                custom_info(f"Looking for {ticker} {fiscal_info['quarter_period']} filings")
-                custom_info(f"Fiscal quarter period: {fiscal_info['period_description']}")
-                custom_info(f"Expected earnings reporting window: {fiscal_info['expected_report']}")
-                
-                # We want to find filings around the expected earnings report date
-                start_date = fiscal_info['report_start'] - timedelta(days=15)  # Include potential early reports
-                end_date = fiscal_info['report_end'] + timedelta(days=15)  # Include potential late reports
-                
-                custom_info(f"Searching for filings between: {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}")
-                
-                # Find filings in this date range
-                for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
-                    if form == "8-K":
-                        date = datetime.strptime(date_str, "%Y-%m-%d")
-                        if start_date <= date <= end_date:
-                            accessions.append((accession, date_str))
-                            st.markdown(f"<div class='success-box'>Found filing from {date_str}: {accession}</div>", unsafe_allow_html=True)
-        
-        else:  # Default: most recent only
-            for form, date_str, accession in zip(filings["form"], filings["filingDate"], filings["accessionNumber"]):
-                if form == "8-K":
-                    accessions.append((accession, date_str))
-                    break
-        
-        # Show debug info about the selected accessions
-        if accessions:
-            custom_success(f"Found {len(accessions)} relevant 8-K filings")
-        else:
-            # Show all available dates for reference
-            available_dates = []
-            for form, date_str in zip(filings["form"], filings["filingDate"]):
-                if form == "8-K":
-                    available_dates.append(date_str)
-            
-            if available_dates:
-                available_dates.sort(reverse=True)  # Show most recent first
-                date_list = "<div class='info-box'>All available 8-K filing dates:<ul>"
-                for date in available_dates[:15]:  # Show only the first 15 to avoid cluttering
-                    date_list += f"<li>{date}</li>"
-                if len(available_dates) > 15:
-                    date_list += f"<li>... and {len(available_dates) - 15} more</li>"
-                date_list += "</ul></div>"
-                st.markdown(date_list, unsafe_allow_html=True)
-        
-        return accessions
-    except Exception as e:
-        custom_error(f"Error retrieving filings: {str(e)}")
-        return []
+        if available_dates:
+            available_dates.sort(reverse=True)  # Show most recent first
+            st.write("All available 8-K filing dates:")
+            for date in available_dates[:15]:  # Show only the first 15 to avoid cluttering
+                st.write(f"- {date}")
+            if len(available_dates) > 15:
+                st.write(f"... and {len(available_dates) - 15} more")
+    
+    return accessions
 
 
 def get_ex99_1_links(cik, accessions):
-    """Get links to Exhibit 99.1 (earnings release) in 8-K filings"""
     links = []
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
-    
-    with st.progress(0, text="Finding earnings releases in 8-K filings..."):
-        for i, (accession, date_str) in enumerate(accessions):
-            try:
-                base_folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/"
-                index_url = base_folder + f"{accession}-index.htm"
-                res = requests.get(index_url, headers=headers)
-                if res.status_code != 200:
-                    continue
-                    
-                soup = BeautifulSoup(res.text, "html.parser")
-                found = False
-                
-                for row in soup.find_all("tr"):
-                    if "99.1" in row.get_text().lower():
-                        tds = row.find_all("td")
-                        if len(tds) >= 3:
-                            filename = tds[2].text.strip()
-                            links.append((date_str, accession, base_folder + filename))
-                            found = True
-                            break
-                            
-                if not found:
-                    custom_warning(f"No Exhibit 99.1 found in filing {date_str} ({accession})")
-                
-                # Update progress bar
-                progress = (i + 1) / len(accessions)
-                st.progress(progress, text=f"Processing filing {i+1} of {len(accessions)}...")
-            except Exception as e:
-                custom_warning(f"Error processing filing {accession}: {str(e)}")
-    
+    for accession, date_str in accessions:
+        base_folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/"
+        index_url = base_folder + f"{accession}-index.htm"
+        res = requests.get(index_url, headers=headers)
+        if res.status_code != 200:
+            continue
+        soup = BeautifulSoup(res.text, "html.parser")
+        for row in soup.find_all("tr"):
+            if "99.1" in row.get_text().lower():
+                tds = row.find_all("td")
+                if len(tds) >= 3:
+                    filename = tds[2].text.strip()
+                    links.append((date_str, accession, base_folder + filename))
+                    break
     return links
 
-def find_guidance_paragraphs(text, ticker):
+
+def find_guidance_paragraphs(text):
     """
     Extract paragraphs from text that are likely to contain guidance information.
     Returns both the filtered paragraphs and a boolean indicating if any were found.
@@ -1306,7 +1130,6 @@ def find_guidance_paragraphs(text, ticker):
     
     return formatted_paragraphs, found_paragraphs
 
-
 def extract_guidance(text, ticker, client, model_name):
     """
     Enhanced function to extract guidance from SEC filings with improved handling of 
@@ -1386,248 +1209,178 @@ Respond in table format without commentary.\n\n{text}"""
         )
         return response.choices[0].message.content
     except Exception as e:
-        custom_warning(f"⚠️ Error extracting guidance: {str(e)}")
+        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
         return None
 
-# Improved button with more context
-extract_button = st.button(
-    "📊 Extract Guidance",
-    help="Click to start extracting guidance from selected 8-K filings",
-    use_container_width=True
-)
 
-# Create a container for results
-results_container = st.container()
-
-# Process button click with improved UI feedback
-if extract_button:
-    # Validation checks with better error messages
+if st.button("🔍 Extract Guidance"):
     if not api_key:
-        custom_error("⚠️ Please enter your OpenAI API key. This is required for analyzing the 8-K documents.")
-        st.stop()
-        
-    if not ticker:
-        custom_error("⚠️ Please enter a stock ticker (e.g., MSFT, AAPL).")
-        st.stop()
-    
-    # Show a progress message
-    with st.spinner("🔍 Looking up company information..."):
+        st.error("Please enter your OpenAI API key.")
+    else:
         cik = lookup_cik(ticker)
-        
-    if not cik:
-        custom_error(f"⚠️ CIK not found for ticker '{ticker}'. Please check the ticker symbol and try again.")
-        st.stop()
-    
-    # Get the selected model ID from the dropdown
-    model_id = openai_models[selected_model]
-    
-    # Initialize the OpenAI client
-    client = OpenAI(api_key=api_key)
-    
-    # Display model information once at the beginning
-    custom_info(f"Using OpenAI model: {selected_model}")
-    
-    # Store the ticker for later use
-    st.session_state['ticker'] = ticker
-    
-    # Handle different filtering options based on the selected radio button
-    if filing_option == "Most recent only":
-        accessions = get_accessions(cik, ticker)
-    elif filing_option == "Specific quarter":
-        if not quarter_input.strip():
-            custom_error("Please enter a specific quarter.")
-            st.stop()
-        accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
-        if not accessions:
-            custom_warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
-            st.stop()
-    elif filing_option == "Years back":
-        if not year_input.strip():
-            custom_error("Please enter the number of years back to search.")
-            st.stop()
-        try:
-            years_back = int(year_input.strip())
-            accessions = get_accessions(cik, ticker, years_back=years_back)
-        except ValueError:
-            custom_error("Invalid year input. Must be a number.")
-            st.stop()
-        if not accessions:
-            custom_warning(f"No 8-K filings found in the past {years_back} years.")
-            st.stop()
+        if not cik:
+            st.error("CIK not found for ticker.")
+        else:
+            # Get the selected model ID from the dropdown
+            model_id = openai_models[selected_model]
+            
+            # Initialize the OpenAI client
+            client = OpenAI(api_key=api_key)
+            
+            # Display model information once at the beginning
+            st.info(f"Using OpenAI model: {selected_model}")
+            
+            # Store the ticker for later use
+            st.session_state['ticker'] = ticker
+            
+            # Handle different filtering options
+            if quarter_input.strip():
+                # Quarter input takes precedence
+                accessions = get_accessions(cik, ticker, specific_quarter=quarter_input.strip())
+                if not accessions:
+                    st.warning(f"No 8-K filings found for {quarter_input}. Please check the format (e.g., 2Q25, Q4FY24).")
+            elif year_input.strip():
+                try:
+                    years_back = int(year_input.strip())
+                    accessions = get_accessions(cik, ticker, years_back=years_back)
+                except:
+                    st.error("Invalid year input. Must be a number.")
+                    accessions = []
+            else:
+                # Default to most recent if neither input is provided
+                accessions = get_accessions(cik, ticker)
 
-    # Get links to Exhibit 99.1 (earnings release) in the 8-K filings
-    links = get_ex99_1_links(cik, accessions)
-    
-    if not links:
-        custom_error("No Exhibit 99.1 (earnings release) found in the selected 8-K filings.")
-        st.stop()
-        
-    # Process each filing
-    results = []
-    
-    for date_str, acc, url in links:
-        custom_info(f"📄 Processing filing from {date_str}")
-        try:
-            with st.spinner(f"Downloading and analyzing filing from {date_str}..."):
-                html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
-                soup = BeautifulSoup(html, "html.parser")
-                
-                # Extract text while preserving structure
-                text = soup.get_text(" ", strip=True)
-                
-                # Find paragraphs containing guidance patterns
-                guidance_paragraphs, found_guidance = find_guidance_paragraphs(text, ticker)
-                
-                # Check if we found any guidance paragraphs
-                if found_guidance:
-                    custom_success(f"✅ Found potential guidance information in the {date_str} filing.")
+            links = get_ex99_1_links(cik, accessions)
+            results = []
+
+            for date_str, acc, url in links:
+                st.write(f"📄 Processing {url}")
+                try:
+                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
+                    soup = BeautifulSoup(html, "html.parser")
                     
-                    # Extract guidance from the highlighted text using the selected model
-                    table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
-                else:
-                    custom_warning(f"⚠️ No guidance paragraphs found in the {date_str} filing. Trying with a sample of the document.")
-                    # Use a sample of the document to reduce token usage
-                    sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
-                    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-                    sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
-                    # Extract guidance from the sample
-                    table = extract_guidance(sample_text, ticker, client, model_id)
-                
-                if table and "|" in table:
-                    rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                    if len(rows) > 1:  # Check if we have header and at least one row of data
-                        df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                    # Extract text while preserving structure
+                    text = soup.get_text(" ", strip=True)
+                    
+                    # Find paragraphs containing guidance patterns
+                    guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
+                    
+                    # Check if we found any guidance paragraphs
+                    if found_guidance:
+                        st.success(f"✅ Found potential guidance information.")
                         
-                        # Store which rows have percentages or parenthetical values in the Value column
-                        percentage_rows = []
-                        parenthetical_rows = []
-                        for idx, row in df.iterrows():
-                            value_col = df.columns[1]  # Usually "Value"
-                            val_text = str(row[value_col])
-                            if '%' in val_text:
-                                percentage_rows.append(idx)
-                            if '(' in val_text and ')' in val_text:
-                                parenthetical_rows.append(idx)
-                        
-                        # Parse low, high, and average from Value column
-                        value_col = df.columns[1]
-                        df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                        
-                        # Apply special corrections for parenthetical values
-                        # This ensures that values with parentheses like ($0.05) remain negative
-                        for idx in parenthetical_rows:
-                            for col in ['Low', 'High', 'Average']:
-                                if col in df.columns and df.loc[idx, col] is not None:
-                                    val = df.loc[idx, col]
-                                    if isinstance(val, (int, float)) and val > 0:
-                                        # If the original was parenthetical (negative) but our value is positive, fix it
-                                        df.at[idx, col] = -abs(val)
-                                    elif isinstance(val, str) and not val.startswith('-'):
-                                        # Extract numeric portion if it's a string
-                                        try:
-                                            num_val = float(re.sub(r'[^\d.]', '', val))
-                                            # Reformat with negative sign
-                                            if '%' in val:
-                                                df.at[idx, col] = f"-{abs(num_val):.1f}%"
-                                            elif '$' in val:
-                                                if abs(num_val) >= 100:
-                                                    df.at[idx, col] = f"-${abs(num_val):.0f}"
-                                                elif abs(num_val) >= 10:
-                                                    df.at[idx, col] = f"-${abs(num_val):.1f}"
-                                                else:
-                                                    df.at[idx, col] = f"-${abs(num_val):.2f}"
-                                            else:
-                                                df.at[idx, col] = f"-{abs(num_val)}"
-                                        except:
-                                            pass
-                        
-                        # Apply comprehensive sign correction based on context
-                        df = correct_value_signs(df)
-                        
-                        # Apply GAAP/non-GAAP split
-                        df = split_gaap_non_gaap(df)
-                        
-                        # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                        for idx in percentage_rows:
-                            # Add % to Low, High, Average columns
-                            for col in ['Low', 'High', 'Average']:
-                                if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                    df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                        
-                        # Apply a final consistency check to fix any remaining issues with negative ranges
-                        df = check_range_consistency(df)
-                        
-                        # Add TimeFrame column to identify if guidance is for Quarter, Full Year, or Other
-                        if 'Period' in df.columns:
-                            df["TimeFrame"] = df["Period"].apply(determine_timeframe)
-                        
-                        # Add metadata columns
-                        df["FilingDate"] = date_str
-                        df["8K_Link"] = url
-                        df["Model_Used"] = selected_model
-                        
-                        results.append(df)
-                        custom_success(f"✅ Successfully extracted guidance from the {date_str} filing.")
+                        # Extract guidance from the highlighted text using the selected model
+                        # Removed the st.info() line that showed model info for each document
+                        table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
                     else:
-                        custom_warning(f"⚠️ Table format was detected but no data rows were found in the {date_str} filing")
+                        st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
+                        # Use a sample of the document to reduce token usage
+                        sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                        sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
+                        # Removed the st.info() line that showed model info for each document
+                        table = extract_guidance(sample_text, ticker, client, model_id)
+                    
+                    if table and "|" in table:
+                        rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                        if len(rows) > 1:  # Check if we have header and at least one row of data
+                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                            
+                            # Store which rows have percentages or parenthetical values in the Value column
+                            percentage_rows = []
+                            parenthetical_rows = []
+                            for idx, row in df.iterrows():
+                                value_col = df.columns[1]  # Usually "Value"
+                                val_text = str(row[value_col])
+                                if '%' in val_text:
+                                    percentage_rows.append(idx)
+                                if '(' in val_text and ')' in val_text:
+                                    parenthetical_rows.append(idx)
+                            
+                            # Parse low, high, and average from Value column
+                            value_col = df.columns[1]
+                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                            
+                            # Apply special corrections for parenthetical values
+                            # This ensures that values with parentheses like ($0.05) remain negative
+                            for idx in parenthetical_rows:
+                                for col in ['Low', 'High', 'Average']:
+                                    if col in df.columns and df.loc[idx, col] is not None:
+                                        val = df.loc[idx, col]
+                                        if isinstance(val, (int, float)) and val > 0:
+                                            # If the original was parenthetical (negative) but our value is positive, fix it
+                                            df.at[idx, col] = -abs(val)
+                                        elif isinstance(val, str) and not val.startswith('-'):
+                                            # Extract numeric portion if it's a string
+                                            try:
+                                                num_val = float(re.sub(r'[^\d.]', '', val))
+                                                # Reformat with negative sign
+                                                if '%' in val:
+                                                    df.at[idx, col] = f"-{abs(num_val):.1f}%"
+                                                elif ' in val:
+                                                    if abs(num_val) >= 100:
+                                                        df.at[idx, col] = f"-${abs(num_val):.0f}"
+                                                    elif abs(num_val) >= 10:
+                                                        df.at[idx, col] = f"-${abs(num_val):.1f}"
+                                                    else:
+                                                        df.at[idx, col] = f"-${abs(num_val):.2f}"
+                                                else:
+                                                    df.at[idx, col] = f"-{abs(num_val)}"
+                                            except:
+                                                pass
+                            
+                            # Apply comprehensive sign correction based on context
+                            df = correct_value_signs(df)
+                            
+                            # Apply GAAP/non-GAAP split
+                            df = split_gaap_non_gaap(df)
+                            
+                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                            for idx in percentage_rows:
+                                # Add % to Low, High, Average columns
+                                for col in ['Low', 'High', 'Average']:
+                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                        df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                            
+                            # Apply a final consistency check to fix any remaining issues with negative ranges
+                            df = check_range_consistency(df)
+                            
+                            # Add TimeFrame column to identify if guidance is for Quarter, Full Year, or Other
+                            if 'Period' in df.columns:
+                                df["TimeFrame"] = df["Period"].apply(determine_timeframe)
+                            
+                            # Add metadata columns
+                            df["FilingDate"] = date_str
+                            df["8K_Link"] = url
+                            df["Model_Used"] = selected_model  # Add the model used to the output
+                            results.append(df)
+                            st.success("✅ Guidance extracted from this 8-K.")
+                        else:
+                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
+                            
+                            # Show a sample of the text to help debug
+                            st.write("Sample of text sent to OpenAI:")
+                            sample_length = min(500, len(guidance_paragraphs))
+                            st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                    else:
+                        st.warning(f"⚠️ No guidance table found in {url}")
                         
                         # Show a sample of the text to help debug
-                        expander = st.expander("View sample of text sent to OpenAI")
+                        st.write("Sample of text sent to OpenAI:")
                         sample_length = min(500, len(guidance_paragraphs))
-                        expander.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                else:
-                    custom_warning(f"⚠️ No guidance table found in the {date_str} filing")
-                    
-                    # Show a sample of the text to help debug
-                    expander = st.expander("View sample of text sent to OpenAI")
-                    sample_length = min(500, len(guidance_paragraphs))
-                    expander.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-        except Exception as e:
-            custom_error(f"❌ Could not process filing from {date_str}: {str(e)}")
+                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                except Exception as e:
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
 
-    # Show results if any were found
-    if results:
-        combined = pd.concat(results, ignore_index=True)
-        
-        with results_container:
-            st.markdown("<h2 class='section-header'>📊 Extracted Guidance</h2>", unsafe_allow_html=True)
-            
-            # Display the filtered table with the TimeFrame column
-            if 'TimeFrame' in combined.columns:
-                # Add filtering options
-                st.markdown("<h3 class='section-header'>🔍 Filter Results</h3>", unsafe_allow_html=True)
+            if results:
+                combined = pd.concat(results, ignore_index=True)
                 
-                col1, col2 = st.columns(2)
+                # Preview the table
+                st.subheader("🔍 Preview of Extracted Guidance")
                 
-                with col1:
-                    # Filter by TimeFrame
-                    timeframe_options = sorted(combined['TimeFrame'].unique())
-                    timeframe_filter = st.multiselect(
-                        "Filter by Time Frame:",
-                        options=timeframe_options,
-                        default=timeframe_options,
-                        help="Select which time periods to include"
-                    )
-                
-                with col2:
-                    # Filter by Metric
-                    metric_options = sorted(combined['Metric'].unique())
-                    metric_filter = st.multiselect(
-                        "Filter by Metric:",
-                        options=metric_options,
-                        default=metric_options,
-                        help="Select which financial metrics to include"
-                    )
-                
-                # Apply filters
-                filtered_df = combined[
-                    combined['TimeFrame'].isin(timeframe_filter) & 
-                    combined['Metric'].isin(metric_filter)
-                ]
-                
-                # Select the most relevant columns for display - put TimeFrame after Period
+                # Select the most relevant columns for display
                 display_cols = ["Metric", "Value", "Period", "TimeFrame", "Low", "High", "Average", "FilingDate", "Model_Used"]
-                display_df = filtered_df[display_cols] if all(col in filtered_df.columns for col in display_cols) else filtered_df
+                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
                 
                 # Apply custom formatting when displaying
                 # Convert numeric columns to appropriate string formats
@@ -1635,50 +1388,19 @@ if extract_button:
                     if col in display_df.columns:
                         display_df[col] = display_df[col].apply(
                             lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
-                                    any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
-                                    else format_dollar(x) if isinstance(x, (int, float)) and 
-                                    any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
-                                    else x)
+                                      any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
+                                      else format_dollar(x) if isinstance(x, (int, float)) and 
+                                      any(' in str(row.get('Value', '')) for _, row in display_df.iterrows())
+                                      else x)
                         )
-                
-                # Show a summary of results
-                st.markdown(f"<div class='success-box'>Found {len(filtered_df)} guidance items across {len(results)} filings</div>", unsafe_allow_html=True)
                 
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-                # Add download button with the current date
-                today_str = datetime.now().strftime('%Y%m%d')
-                excel_buffer = io.BytesIO()
-                filtered_df.to_excel(excel_buffer, index=False)
-                st.download_button(
-                    "📥 Download Guidance as Excel",
-                    data=excel_buffer.getvalue(),
-                    file_name=f"{ticker}_guidance_{today_str}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    help="Download the filtered results as an Excel file"
-                )
-            else:
-                st.dataframe(combined, use_container_width=True)
-                
                 # Add download button
+                import io
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
-                st.download_button(
-                    "📥 Download Excel",
-                    data=excel_buffer.getvalue(),
-                    file_name=f"{ticker}_guidance.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-    else:
-        with results_container:
-            custom_warning("No guidance data extracted. Try a different company or time period.")
-
-# Footer with additional information
-st.markdown("""
-<div class="small-text">
-<hr>
-<p>This tool uses OpenAI's language models to extract and analyze forward-looking statements from SEC 8-K filings. 
-The extracted guidance information is for informational purposes only and should not be considered financial advice.</p>
-</div>
-""", unsafe_allow_html=True)
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("No guidance data extracted.")
