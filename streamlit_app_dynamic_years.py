@@ -1,4 +1,3 @@
-
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -7,7 +6,6 @@ from openai import OpenAI
 import pandas as pd
 import os
 import re
-import io
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
@@ -40,7 +38,7 @@ def extract_number(token: str):
     tok = original_token.replace('(', '').replace(')', '').replace('$','') \
                         .replace(',', '').replace('-', '').replace('+', '').strip().lower()
 
-    # Convert billions to millions (multiply by 1000)
+# Convert billions to millions (multiply by 1000)
     factor = 1.0
     if 'billion' in tok or tok.endswith('b'):
         if 'billion' in tok:
@@ -63,6 +61,7 @@ def extract_number(token: str):
         return -val if is_negative else val
     except:
         return None
+
 
 def format_percent(val):
     """Format a value as a percentage with consistent decimal places"""
@@ -143,7 +142,7 @@ def parse_value_range(text: str):
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
 
-    # 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
+# 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
     dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
     if dollar_to_range:
         lo = extract_number(dollar_to_range.group(1))
@@ -426,6 +425,9 @@ def check_range_consistency(df):
                             df.at[idx, 'Average'] = avg
                     else:
                         df.at[idx, 'Average'] = avg
+        
+        # Other range consistency checks...
+        # (continuing with other checks from the original function)
     
     return df
 
@@ -450,131 +452,6 @@ def split_gaap_non_gaap(df):
         else:
             rows.append(row)
     return pd.DataFrame(rows)
-
-def standardize_metrics(df):
-    """
-    Standardizes metric names in the guidance dataframe
-    """
-    if 'Metric' not in df.columns:
-        return df  # Skip if Metric column is missing
-    
-    # Create a mapping of common variations to standardized names
-    metric_mapping = {
-        # EPS variations
-        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(earnings per share|eps|net income per share|per share|income per share)\b.*': 'Non-GAAP EPS',
-        r'(?i).*\b(gaap)\b.*\b(earnings per share|eps|net income per share|per share|income per share)\b.*': 'GAAP EPS',
-        r'(?i).*\b(earnings per share|eps|per share|net income per share|income per share)\b.*': 'EPS',
-        
-        # Revenue variations
-        r'(?i).*\b(total revenue|revenue|net revenue|consolidated revenue)\b.*': 'Revenue',
-        
-        # Income variations
-        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(operating income|income from operations)\b.*': 'Non-GAAP Operating Income',
-        r'(?i).*\b(gaap)\b.*\b(operating income|income from operations)\b.*': 'GAAP Operating Income',
-        r'(?i).*\b(operating income|income from operations)\b.*': 'Operating Income',
-        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(net income|profit|earnings)\b.*': 'Non-GAAP Net Income',
-        r'(?i).*\b(gaap)\b.*\b(net income|profit|earnings)\b.*': 'GAAP Net Income',
-        r'(?i).*\b(net income|profit|earnings)\b.*': 'Net Income',
-        
-        # Margin variations
-        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(operating margin)\b.*': 'Non-GAAP Operating Margin',
-        r'(?i).*\b(gaap)\b.*\b(operating margin)\b.*': 'GAAP Operating Margin',
-        r'(?i).*\b(operating margin)\b.*': 'Operating Margin',
-        r'(?i).*\b(non-gaap|adjusted|non gaap)\b.*\b(gross margin)\b.*': 'Non-GAAP Gross Margin',
-        r'(?i).*\b(gaap)\b.*\b(gross margin)\b.*': 'GAAP Gross Margin',
-        r'(?i).*\b(gross margin)\b.*': 'Gross Margin',
-        r'(?i).*\b(profit margin|net margin)\b.*': 'Profit Margin',
-        
-        # Cash flow variations
-        r'(?i).*\b(free cash flow|fcf)\b.*': 'Free Cash Flow',
-        r'(?i).*\b(operating cash flow|cash flow from operations)\b.*': 'Operating Cash Flow',
-        
-        # EBITDA variations
-        r'(?i).*\b(adjusted ebitda|adj\.? ebitda)\b.*': 'Adj. EBITDA',
-        r'(?i).*\b(ebitda)\b.*': 'EBITDA',
-        
-        # Growth variations
-        r'(?i).*\b(revenue growth|growth rate)\b.*': 'Revenue Growth',
-        
-        # Tax rate variations
-        r'(?i).*\b(tax rate|effective tax rate)\b.*': 'Tax Rate',
-        
-        # Capex variations
-        r'(?i).*\b(capital expenditures|capex)\b.*': 'Capital Expenditures',
-    }
-    
-    # Apply the standardization
-    for idx, row in df.iterrows():
-        original_metric = row['Metric']
-        standardized_metric = original_metric  # Default to original
-        
-        # Try to match against patterns
-        for pattern, standard_name in metric_mapping.items():
-            if re.match(pattern, original_metric):
-                standardized_metric = standard_name
-                break
-                
-        # Update the metric name
-        df.at[idx, 'Metric'] = standardized_metric
-    
-    return df
-
-def enhance_guidance_formatting(df, client, model_name):
-    """
-    Function to improve the formatting and standardization of guidance data
-    using GPT to generate proper Excel formatting and standardize metric names.
-    """
-    if df.empty:
-        return df, None
-        
-    # Create sample of the dataframe to include in the prompt
-    sample_rows = min(5, len(df))
-    df_sample = df.head(sample_rows).to_string()
-    
-    # Create the GPT prompt for formatting improvement
-    prompt = f"""
-I need to improve the output formatting of my SEC 8-K Guidance Extractor tool that parses financial guidance from earnings releases. Here's a sample of my current dataframe:
-
-{df_sample}
-
-Please help me with two key improvements:
-
-1. EXCEL FORMATTING: When the data is exported to Excel, I need numeric values to maintain their proper formatting types rather than being exported as strings. Specifically:
-   - Percentage values should be formatted as actual percentage cells in Excel (not just text with % symbols)
-   - Dollar values should be formatted as currency cells in Excel (not just text with $ symbols)
-   - Plain numeric values should be formatted as number cells
-   - This should happen during the Excel export process without changing how values display in the Streamlit interface
-
-2. METRIC STANDARDIZATION: I need a comprehensive mapping of common financial metric variations to standard labels. For example:
-   - Various forms of "Non-GAAP Net Income Per Share" should standardize to "Non-GAAP EPS"
-   - "Net Income Per Share" variations should standardize to "GAAP EPS"
-   - "Revenue" variations (like "Total Revenue") should standardize to just "Revenue"
-   - "Operating Income" variations should standardize to "Operating Income"
-   - "Adjusted EBITDA" variations should standardize to "Adj. EBITDA"
-
-Please provide two specific functions I can add:
-1. A 'standardize_metrics' function that takes a dataframe and standardizes the metric names
-2. A 'format_dataframe_for_excel' function that properly types my numeric data for Excel export
-
-I need these to be Python functions that I can directly add to my code.
-"""
-    
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-        
-        st.info("💡 Applying GPT-suggested formatting and standardization improvements")
-        formatting_advice = response.choices[0].message.content
-        
-        # Return the original dataframe and formatting advice
-        return df, formatting_advice
-        
-    except Exception as e:
-        st.warning(f"⚠️ Error getting formatting advice: {str(e)}")
-        return df, None
 
 def extract_guidance(text, ticker, client, model_name):
     """
@@ -666,86 +543,38 @@ Respond in table format without commentary.\n\n{text}"""
         st.warning(f"⚠️ Error extracting guidance: {str(e)}")
         return None
 
-def find_guidance_paragraphs(text):
-    """
-    Extract paragraphs from text that are likely to contain guidance information.
-    Returns both the filtered paragraphs and a boolean indicating if any were found.
-    """
-    # Define patterns to identify guidance sections
-    guidance_patterns = [
-        r'(?i)outlook',
-        r'(?i)guidance',
-        r'(?i)financial outlook',
-        r'(?i)business outlook',
-        r'(?i)forward[\s-]*looking',
-        r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
-        r'(?i)(?:we|company) expect(?:s)?',
-        r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
-        r'(?i)to be (?:in the range of|approximately)',
-        r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
-        r'(?i)growth of (?:approximately|about)',
-        r'(?i)for (?:fiscal|the fiscal)',
-        r'(?i)next quarter',
-        r'(?i)full year',
-        r'(?i)current quarter',
-        r'(?i)future quarter',
-        r'(?i)Q[1-4]'
-    ]
-    
-    # Split text into paragraphs
-    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-    
-    # Find paragraphs matching guidance patterns
-    guidance_paragraphs = []
-    
-    for para in paragraphs:
-        if any(re.search(pattern, para) for pattern in guidance_patterns):
-            # Check if it's likely a forward-looking statement (not a disclaimer)
-            if not (re.search(r'(?i)safe harbor', para) or 
-                    (re.search(r'(?i)forward-looking statements', para) and 
-                     re.search(r'(?i)risks', para))):
-                guidance_paragraphs.append(para)
-    
-    # Check if we found any guidance paragraphs
-    found_paragraphs = len(guidance_paragraphs) > 0
-    
-    # If no guidance paragraphs found, get a small sample of the document
-    if not found_paragraphs:
-        # Extract a small sample from sections that might contain guidance
-        for section_name in ["outlook", "guidance", "forward", "future", "expect", "anticipate"]:
-            section_pattern = re.compile(fr'(?i)(?:^|\n|\. )([^.]*{section_name}[^.]*\. [^.]*\. [^.]*\.)', re.MULTILINE)
-            matches = section_pattern.findall(text)
-            for match in matches:
-                if len(match.strip()) > 50:  # Ensure it's not just a brief mention
-                    guidance_paragraphs.append(match.strip())
-    
-    # If still no paragraphs found, get first few paragraphs and any with financial terms
-    if not guidance_paragraphs:
-        # Add first few paragraphs (might contain summary of results including guidance)
-        first_few = paragraphs[:5] if len(paragraphs) > 5 else paragraphs
-        guidance_paragraphs.extend([p for p in first_few if len(p.strip()) > 100])
-        
-        # Add paragraphs with financial terms
-        financial_terms = ["revenue", "earnings", "eps", "income", "margin", "growth", "forecast"]
-        for para in paragraphs:
-            if any(term in para.lower() for term in financial_terms) and para not in guidance_paragraphs:
-                if len(para.strip()) > 100:  # Ensure it's substantial
-                    guidance_paragraphs.append(para)
-                    if len(guidance_paragraphs) > 15:  # Limit sample size
-                        break
-    
-    # Combine paragraphs and add a note about the original document
-    formatted_paragraphs = "\n\n".join(guidance_paragraphs)
-    
-    # Add metadata about the document to help GPT understand the context
-    if guidance_paragraphs:
-        formatted_paragraphs = (
-            f"DOCUMENT TYPE: SEC 8-K Earnings Release for {ticker}\n\n"
-            f"POTENTIAL GUIDANCE INFORMATION (extracted from full document):\n\n{formatted_paragraphs}\n\n"
-            "Note: These are selected paragraphs that may contain forward-looking guidance."
-        )
-    
-    return formatted_paragraphs, found_paragraphs
+# Streamlit App Setup
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
+
+# Inputs
+ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+# Add model selection dropdown
+openai_models = {
+    "GPT-4 Turbo": "gpt-4-turbo-preview",
+    "GPT-4": "gpt-4",
+    "GPT-3.5 Turbo": "gpt-3.5-turbo"
+}
+selected_model = st.selectbox(
+    "Select OpenAI Model",
+    list(openai_models.keys()),
+    index=0  # Default to first option (GPT-4 Turbo)
+)
+
+# Both filter options displayed at the same time
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
+
+@st.cache_data(show_spinner=False)
+def lookup_cik(ticker):
+    headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+    data = res.json()
+    for entry in data.values():
+        if entry["ticker"].upper() == ticker:
+            return str(entry["cik_str"]).zfill(10)
 
 def get_fiscal_year_end(ticker, cik):
     """
@@ -777,6 +606,7 @@ def get_fiscal_year_end(ticker, cik):
     except Exception as e:
         st.warning(f"⚠️ Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
         return 12, 31
+
 
 def generate_fiscal_quarters(fiscal_year_end_month):
     """
@@ -1003,41 +833,88 @@ def get_ex99_1_links(cik, accessions):
                     break
     return links
 
-# Initialize Streamlit app
-st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
-st.title("📄 SEC 8-K Guidance Extractor")
 
-# Inputs
-ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
-api_key = st.text_input("Enter OpenAI API Key", type="password")
+def find_guidance_paragraphs(text):
+    """
+    Extract paragraphs from text that are likely to contain guidance information.
+    Returns both the filtered paragraphs and a boolean indicating if any were found.
+    """
+    # Define patterns to identify guidance sections
+    guidance_patterns = [
+        r'(?i)outlook',
+        r'(?i)guidance',
+        r'(?i)financial outlook',
+        r'(?i)business outlook',
+        r'(?i)forward[\s-]*looking',
+        r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
+        r'(?i)(?:we|company) expect(?:s)?',
+        r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
+        r'(?i)to be (?:in the range of|approximately)',
+        r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
+        r'(?i)growth of (?:approximately|about)',
+        r'(?i)for (?:fiscal|the fiscal)',
+        r'(?i)next quarter',
+        r'(?i)full year',
+        r'(?i)current quarter',
+        r'(?i)future quarter',
+        r'(?i)Q[1-4]'
+    ]
+    
+    # Split text into paragraphs
+    paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+    
+    # Find paragraphs matching guidance patterns
+    guidance_paragraphs = []
+    
+    for para in paragraphs:
+        if any(re.search(pattern, para) for pattern in guidance_patterns):
+            # Check if it's likely a forward-looking statement (not a disclaimer)
+            if not (re.search(r'(?i)safe harbor', para) or 
+                    (re.search(r'(?i)forward-looking statements', para) and 
+                     re.search(r'(?i)risks', para))):
+                guidance_paragraphs.append(para)
+    
+    # Check if we found any guidance paragraphs
+    found_paragraphs = len(guidance_paragraphs) > 0
+    
+    # If no guidance paragraphs found, get a small sample of the document
+    if not found_paragraphs:
+        # Extract a small sample from sections that might contain guidance
+        for section_name in ["outlook", "guidance", "forward", "future", "expect", "anticipate"]:
+            section_pattern = re.compile(fr'(?i)(?:^|\n|\. )([^.]*{section_name}[^.]*\. [^.]*\. [^.]*\.)', re.MULTILINE)
+            matches = section_pattern.findall(text)
+            for match in matches:
+                if len(match.strip()) > 50:  # Ensure it's not just a brief mention
+                    guidance_paragraphs.append(match.strip())
+    
+    # If still no paragraphs found, get first few paragraphs and any with financial terms
+    if not guidance_paragraphs:
+        # Add first few paragraphs (might contain summary of results including guidance)
+        first_few = paragraphs[:5] if len(paragraphs) > 5 else paragraphs
+        guidance_paragraphs.extend([p for p in first_few if len(p.strip()) > 100])
+        
+        # Add paragraphs with financial terms
+        financial_terms = ["revenue", "earnings", "eps", "income", "margin", "growth", "forecast"]
+        for para in paragraphs:
+            if any(term in para.lower() for term in financial_terms) and para not in guidance_paragraphs:
+                if len(para.strip()) > 100:  # Ensure it's substantial
+                    guidance_paragraphs.append(para)
+                    if len(guidance_paragraphs) > 15:  # Limit sample size
+                        break
+    
+    # Combine paragraphs and add a note about the original document
+    formatted_paragraphs = "\n\n".join(guidance_paragraphs)
+    
+    # Add metadata about the document to help GPT understand the context
+    if guidance_paragraphs:
+        formatted_paragraphs = (
+            f"DOCUMENT TYPE: SEC 8-K Earnings Release for {ticker}\n\n"
+            f"POTENTIAL GUIDANCE INFORMATION (extracted from full document):\n\n{formatted_paragraphs}\n\n"
+            "Note: These are selected paragraphs that may contain forward-looking guidance."
+        )
+    
+    return formatted_paragraphs, found_paragraphs
 
-# Add model selection dropdown
-openai_models = {
-    "GPT-4 Turbo": "gpt-4-turbo-preview",
-    "GPT-4": "gpt-4",
-    "GPT-3.5 Turbo": "gpt-3.5-turbo"
-}
-selected_model = st.selectbox(
-    "Select OpenAI Model",
-    list(openai_models.keys()),
-    index=0  # Default to first option (GPT-4 Turbo)
-)
-
-# Both filter options displayed at the same time
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
-quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
-
-# Decorate with cache to improve performance
-@st.cache_data(show_spinner=False)
-def lookup_cik(ticker):
-    headers = {'User-Agent': 'Your Name Contact@domain.com'}
-    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
-    data = res.json()
-    for entry in data.values():
-        if entry["ticker"].upper() == ticker:
-            return str(entry["cik_str"]).zfill(10)
-
-# Main execution button
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -1138,9 +1015,6 @@ if st.button("🔍 Extract Guidance"):
                             # Apply GAAP/non-GAAP split
                             df = split_gaap_non_gaap(df)
                             
-                            # Apply metric standardization - NEW STEP
-                            df = standardize_metrics(df)
-                            
                             # For rows that originally had % in the Value column, make sure Low, High, Average have % too
                             for idx in percentage_rows:
                                 # Add % to Low, High, Average columns
@@ -1177,15 +1051,6 @@ if st.button("🔍 Extract Guidance"):
             if results:
                 combined = pd.concat(results, ignore_index=True)
                 
-                # Apply GPT-based formatting improvements 
-                # (We still get advice on Excel formatting but now directly standardize the metrics)
-                if api_key:
-                    combined, formatting_advice = enhance_guidance_formatting(combined, client, model_id)
-                    
-                    # If GPT provided useful formatting advice
-                    if formatting_advice:
-                        st.info("💡 GPT provided Excel formatting advice to properly type numbers, percentages, and currency values")
-                
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
                 
@@ -1208,15 +1073,10 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-                # Add download button with GPT-enhanced formatting note
+                # Add download button
+                import io
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
-                st.download_button(
-                    "📥 Download Excel", 
-                    data=excel_buffer.getvalue(), 
-                    file_name=f"{ticker}_guidance_output.xlsx", 
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    help="Note: For better Excel formatting, implement the GPT suggestions above"
-                )
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.warning("No guidance data extracted.")
