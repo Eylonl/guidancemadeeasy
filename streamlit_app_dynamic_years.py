@@ -343,6 +343,89 @@ def correct_value_signs(df):
     
     return df
 
+def determine_timeframe(period_text):
+    """
+    Determine if a period refers to a quarter or full year based on common financial reporting terminology.
+    Returns 'Quarter', 'Full Year', or 'Other'.
+    
+    This function analyzes a period text to identify whether it refers to:
+    - A quarter (Q1, Q2, Q3, Q4, quarterly reporting)
+    - A full year (fiscal year, annual, FY, full-year)
+    - Something else (Other)
+    """
+    if not period_text or not isinstance(period_text, str):
+        return 'Other'
+        
+    period_text = period_text.lower().strip()
+    
+    # Check for quarter indicators
+    quarter_patterns = [
+        # Standard quarter notations: Q1, Q2, Q3, Q4 with variations 
+        r'q[1-4]', r'[1-4]q', r'quarter\s*[1-4]', r'[1-4](?:st|nd|rd|th)\s*quarter',
+        
+        # Quarter with fiscal year: Q1 FY24, Q3 2025, etc.
+        r'q[1-4]\s*(?:fy)?\s*(?:20)?\d{2}',
+        
+        # Quarter descriptions
+        r'first quarter', r'second quarter', r'third quarter', r'fourth quarter',
+        
+        # Relative quarters
+        r'next quarter', r'current quarter', r'upcoming quarter', r'following quarter',
+        r'prior quarter', r'previous quarter', r'last quarter',
+        
+        # Formal designations
+        r'quarter ending', r'quarterly', r'three-month period',
+        
+        # Specific month groupings that indicate quarters
+        r'jan[\w-]*\s*(?:-|to|through)\s*mar[\w-]*', r'apr[\w-]*\s*(?:-|to|through)\s*jun[\w-]*',
+        r'jul[\w-]*\s*(?:-|to|through)\s*sep[\w-]*', r'oct[\w-]*\s*(?:-|to|through)\s*dec[\w-]*'
+    ]
+    
+    # Check for full year indicators
+    full_year_patterns = [
+        # Standard fiscal year notations
+        r'fy\s*\d{2,4}', r'fiscal\s*(?:year)?\s*\d{2,4}', r'financial\s*(?:year)?\s*\d{2,4}',
+        
+        # Calendar year notations
+        r'(?<!q)[2-9]\d{3}(?!\s*q)', r'year\s*\d{4}', r'calendar\s*year\s*\d{4}',
+        
+        # Year descriptors
+        r'\b(?:full|entire|complete|annual|fiscal|financial)\s*year\b', 
+        r'full-year', r'year(?:-|\s)end',
+        
+        # Relative years
+        r'next fiscal year', r'current fiscal year', r'upcoming fiscal year',
+        r'prior fiscal year', r'previous fiscal year', r'last fiscal year',
+        
+        # Formal designations
+        r'(?<!q)annual(?!.*quarter)', r'twelve-month period', r'12-month period',
+        r'year(?:ly)? (?:results|forecast|guidance|outlook)'
+    ]
+    
+    # Check for patterns
+    for pattern in quarter_patterns:
+        if re.search(pattern, period_text):
+            return 'Quarter'
+            
+    for pattern in full_year_patterns:
+        if re.search(pattern, period_text):
+            return 'Full Year'
+    
+    # Special case handling for ambiguous cases
+    if re.search(r'\bq\d?\b', period_text) or 'quarter' in period_text:
+        return 'Quarter'
+    
+    if any(x in period_text for x in ['fy', 'fiscal year', 'financial year', 'annual']) or (
+        'year' in period_text and not any(q in period_text for q in ['quarter', 'q1', 'q2', 'q3', 'q4'])):
+        return 'Full Year'
+    
+    # Handle cases where the period is a specific year (e.g., "2024", "2025")
+    if re.match(r'^20\d{2}$', period_text):
+        return 'Full Year'
+        
+    # Default case
+    return 'Other'
+
 def check_range_consistency(df):
     """
     Improved function to check for and fix inconsistencies in range parsing.
@@ -586,7 +669,7 @@ def check_range_consistency(df):
                     else:
                         df.at[idx, 'Average'] = avg
 
-# 5. Check for duplicate values in ranges
+        # 5. Check for duplicate values in ranges
         # If Low and High are identical but the Value column indicates a range
         if abs(low_val - high_val) < 0.0001 and ('-' in original_value or ' to ' in original_value.lower()):
             # Try to extract the correct range from the Value
@@ -648,6 +731,28 @@ def check_range_consistency(df):
                         pass
     
     return df
+
+def split_gaap_non_gaap(df):
+    if 'Value' not in df.columns or 'Metric' not in df.columns:
+        return df  # Avoid crash if column names are missing
+
+    rows = []
+    for _, row in df.iterrows():
+        val = str(row['Value'])
+        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
+        if match:
+            gaap_val = match.group(1).strip() + " GAAP"
+            non_gaap_val = match.group(2).strip() + " non-GAAP"
+            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
+                new_row = row.copy()
+                new_row["Value"] = new_val
+                new_row["Metric"] = f"{row['Metric']} ({label})"
+                lo, hi, avg = parse_value_range(new_val)
+                new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
+                rows.append(new_row)
+        else:
+            rows.append(row)
+    return pd.DataFrame(rows)
 
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
 st.title("📄 SEC 8-K Guidance Extractor")
@@ -1108,29 +1213,6 @@ Respond in table format without commentary.\n\n{text}"""
         return None
 
 
-def split_gaap_non_gaap(df):
-    if 'Value' not in df.columns or 'Metric' not in df.columns:
-        return df  # Avoid crash if column names are missing
-
-    rows = []
-    for _, row in df.iterrows():
-        val = str(row['Value'])
-        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
-        if match:
-            gaap_val = match.group(1).strip() + " GAAP"
-            non_gaap_val = match.group(2).strip() + " non-GAAP"
-            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
-                new_row = row.copy()
-                new_row["Value"] = new_val
-                new_row["Metric"] = f"{row['Metric']} ({label})"
-                lo, hi, avg = parse_value_range(new_val)
-                new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
-                rows.append(new_row)
-        else:
-            rows.append(row)
-    return pd.DataFrame(rows)
-
-
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -1235,7 +1317,7 @@ if st.button("🔍 Extract Guidance"):
                                                 # Reformat with negative sign
                                                 if '%' in val:
                                                     df.at[idx, col] = f"-{abs(num_val):.1f}%"
-                                                elif '$' in val:
+                                                elif ' in val:
                                                     if abs(num_val) >= 100:
                                                         df.at[idx, col] = f"-${abs(num_val):.0f}"
                                                     elif abs(num_val) >= 10:
@@ -1262,6 +1344,10 @@ if st.button("🔍 Extract Guidance"):
                             
                             # Apply a final consistency check to fix any remaining issues with negative ranges
                             df = check_range_consistency(df)
+                            
+                            # Add TimeFrame column to identify if guidance is for Quarter, Full Year, or Other
+                            if 'Period' in df.columns:
+                                df["TimeFrame"] = df["Period"].apply(determine_timeframe)
                             
                             # Add metadata columns
                             df["FilingDate"] = date_str
@@ -1293,7 +1379,7 @@ if st.button("🔍 Extract Guidance"):
                 st.subheader("🔍 Preview of Extracted Guidance")
                 
                 # Select the most relevant columns for display
-                display_cols = ["Metric", "Value", "Period", "Low", "High", "Average", "FilingDate", "Model_Used"]
+                display_cols = ["Metric", "Value", "Period", "TimeFrame", "Low", "High", "Average", "FilingDate", "Model_Used"]
                 display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
                 
                 # Apply custom formatting when displaying
@@ -1304,7 +1390,7 @@ if st.button("🔍 Extract Guidance"):
                             lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
                                       any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
                                       else format_dollar(x) if isinstance(x, (int, float)) and 
-                                      any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
+                                      any(' in str(row.get('Value', '')) for _, row in display_df.iterrows())
                                       else x)
                         )
                 
