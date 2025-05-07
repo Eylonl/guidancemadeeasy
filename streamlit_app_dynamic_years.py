@@ -143,7 +143,7 @@ def parse_value_range(text: str):
         hi = extract_number(hi_text)
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
-# 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
+    # 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
     dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
     if dollar_to_range:
         lo = extract_number(dollar_to_range.group(1))
@@ -260,7 +260,7 @@ def correct_value_signs(df):
              (numeric_repr.startswith('(') and numeric_repr.endswith(')')))
         )
 
-# Look for explicit positive indicators in surrounding context
+        # Look for explicit positive indicators in surrounding context
         has_positive_context = (
             not is_explicitly_negative and
             re.search(r'\b(?:growth|increase|up|positive|profit|gain)\b', value_text, re.I) and
@@ -519,61 +519,68 @@ def standardize_metrics(df):
     
     return df
 
+def format_dataframe_for_excel(df):
+    """
+    Function to properly format a dataframe for Excel export, ensuring numeric values
+    maintain their proper formatting types for export.
+    
+    Args:
+        df (DataFrame): The input dataframe to format
+        
+    Returns:
+        DataFrame: A new dataframe with appropriate formatting for Excel export
+    """
+    if df.empty:
+        return df
+        
+    excel_df = df.copy()
+    
+    # Identify percentage and currency columns
+    percentage_cols = []
+    currency_cols = []
+    
+    # First, identify what format should be applied to which columns
+    if 'Value' in excel_df.columns:
+        value_contains_percent = excel_df['Value'].astype(str).str.contains('%').any()
+        value_contains_dollar = excel_df['Value'].astype(str).str.contains('\$').any()
+        
+        if value_contains_percent:
+            percentage_cols.extend(['Low', 'High', 'Average'])
+        elif value_contains_dollar:
+            currency_cols.extend(['Low', 'High', 'Average'])
+    
+    # Process percentage columns
+    for col in percentage_cols:
+        if col in excel_df.columns:
+            # Convert percentage strings to numeric values (as decimals)
+            excel_df[col] = excel_df[col].apply(
+                lambda x: float(str(x).replace('%', '')) / 100 if isinstance(x, str) and '%' in x 
+                else x/100 if isinstance(x, (int, float)) 
+                else x
+            )
+    
+    # Process currency columns
+    for col in currency_cols:
+        if col in excel_df.columns:
+            # Convert currency strings to numeric values
+            excel_df[col] = excel_df[col].apply(
+                lambda x: float(re.sub(r'[^\d.-]', '', str(x))) if isinstance(x, str) and '$' in x 
+                else x if isinstance(x, (int, float))
+                else x
+            )
+    
+    return excel_df
+
 def enhance_guidance_formatting(df, client, model_name):
     """
     Function to improve the formatting and standardization of guidance data
-    using GPT to generate proper Excel formatting and standardize metric names.
     """
     if df.empty:
         return df, None
-        
-    # Create sample of the dataframe to include in the prompt
-    sample_rows = min(5, len(df))
-    df_sample = df.head(sample_rows).to_string()
     
-    # Create the GPT prompt for formatting improvement
-    prompt = f"""
-I need to improve the output formatting of my SEC 8-K Guidance Extractor tool that parses financial guidance from earnings releases. Here's a sample of my current dataframe:
-
-{df_sample}
-
-Please help me with two key improvements:
-
-1. EXCEL FORMATTING: When the data is exported to Excel, I need numeric values to maintain their proper formatting types rather than being exported as strings. Specifically:
-   - Percentage values should be formatted as actual percentage cells in Excel (not just text with % symbols)
-   - Dollar values should be formatted as currency cells in Excel (not just text with $ symbols)
-   - Plain numeric values should be formatted as number cells
-   - This should happen during the Excel export process without changing how values display in the Streamlit interface
-
-2. METRIC STANDARDIZATION: I need a comprehensive mapping of common financial metric variations to standard labels. For example:
-   - Various forms of "Non-GAAP Net Income Per Share" should standardize to "Non-GAAP EPS"
-   - "Net Income Per Share" variations should standardize to "GAAP EPS"
-   - "Revenue" variations (like "Total Revenue") should standardize to just "Revenue"
-   - "Operating Income" variations should standardize to "Operating Income"
-   - "Adjusted EBITDA" variations should standardize to "Adj. EBITDA"
-
-Please provide two specific functions I can add:
-1. A 'standardize_metrics' function that takes a dataframe and standardizes the metric names
-2. A 'format_dataframe_for_excel' function that properly types my numeric data for Excel export
-
-I need these to be Python functions that I can directly add to my code.
-"""
-    
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-        
-        formatting_advice = response.choices[0].message.content
-        
-        # Return the formatting advice without displaying it
-        return df, formatting_advice
-        
-    except Exception as e:
-        st.warning(f"⚠️ Error getting formatting advice: {str(e)}")
-        return df, None
+    # Just return the original dataframe without any GPT requests
+    # to avoid displaying the unwanted message
+    return df, None
 
 def extract_guidance(text, ticker, client, model_name):
     """
@@ -746,28 +753,6 @@ def find_guidance_paragraphs(text):
     
     return formatted_paragraphs, found_paragraphs
 
-st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
-st.title("📄 SEC 8-K Guidance Extractor")
-
-# Inputs
-ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
-api_key = st.text_input("Enter OpenAI API Key", type="password")
-
-# Add model selection dropdown
-openai_models = {
-    "GPT-4 Turbo": "gpt-4-turbo-preview",
-    "GPT-4": "gpt-4",
-    "GPT-3.5 Turbo": "gpt-3.5-turbo"
-}
-selected_model = st.selectbox(
-    "Select OpenAI Model",
-    list(openai_models.keys()),
-    index=0  # Default to first option (GPT-4 Turbo)
-)
-
-# Both filter options displayed at the same time
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
-quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
 
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
@@ -852,7 +837,7 @@ def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fisca
     start_month = quarter_info['start_month']
     end_month = quarter_info['end_month']
 
-# Determine if the quarter spans calendar years
+    # Determine if the quarter spans calendar years
     spans_calendar_years = end_month < start_month
     
     # Determine the calendar year for each quarter
@@ -949,7 +934,7 @@ def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
                 if date >= cutoff:
                     accessions.append((accession, date_str))
 
-elif specific_quarter:
+    elif specific_quarter:
         # Parse quarter and year from input - handle various formats
         # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
         match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:\s*FY\s*|\s*)?(\d{2}|\d{4})', specific_quarter.upper())
@@ -1033,6 +1018,29 @@ def get_ex99_1_links(cik, accessions):
                     links.append((date_str, accession, base_folder + filename))
                     break
     return links
+
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
+
+# Inputs
+ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+# Add model selection dropdown
+openai_models = {
+    "GPT-4 Turbo": "gpt-4-turbo-preview",
+    "GPT-4": "gpt-4",
+    "GPT-3.5 Turbo": "gpt-3.5-turbo"
+}
+selected_model = st.selectbox(
+    "Select OpenAI Model",
+    list(openai_models.keys()),
+    index=0  # Default to first option (GPT-4 Turbo)
+)
+
+# Both filter options displayed at the same time
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
 
 if st.button("🔍 Extract Guidance"):
     if not api_key:
@@ -1173,12 +1181,8 @@ if st.button("🔍 Extract Guidance"):
             if results:
                 combined = pd.concat(results, ignore_index=True)
                 
-                # Still get GPT formatting advice but don't display it to the user
-                # The advice will be stored in formatting_advice variable but not shown in UI
-                if api_key:
-                    combined, formatting_advice = enhance_guidance_formatting(combined, client, model_id)
-                    # Save the formatting advice to a session state variable in case needed later
-                    st.session_state['formatting_advice'] = formatting_advice
+                # Get formatting advice without displaying it to the user
+                combined, _ = enhance_guidance_formatting(combined, client, model_id)
                 
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
@@ -1202,17 +1206,9 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-                # Prepare Excel export with proper percent formatting
-                excel_df = combined.copy()
-                
-                # Convert percentage strings to numeric values for Excel
-                for col in ['Low', 'High', 'Average']:
-                    if col in excel_df.columns:
-                        # Convert percentage strings to numeric values (as decimals)
-                        excel_df[col] = excel_df[col].apply(
-                            lambda x: float(str(x).replace('%', '')) / 100 if isinstance(x, str) and '%' in x 
-                            else x
-                        )
+                # Prepare Excel export with proper formatting
+                # Format the dataframe for Excel export
+                excel_df = format_dataframe_for_excel(combined)
                 
                 # Add download button
                 excel_buffer = io.BytesIO()
@@ -1234,10 +1230,11 @@ if st.button("🔍 Extract Guidance"):
                             worksheet.set_column(col_idx, col_idx, 12)
                             
                             # Apply formatting based on the content pattern in the Value column
-                            if excel_df['Value'].astype(str).str.contains('%').any():
-                                worksheet.set_column(col_idx, col_idx, 12, percent_format)
-                            elif excel_df['Value'].astype(str).str.contains('\$').any():
-                                worksheet.set_column(col_idx, col_idx, 15, currency_format)
+                            if 'Value' in excel_df.columns:  # Make sure Value column exists
+                                if excel_df['Value'].astype(str).str.contains('%').any():
+                                    worksheet.set_column(col_idx, col_idx, 12, percent_format)
+                                elif excel_df['Value'].astype(str).str.contains('\$').any():
+                                    worksheet.set_column(col_idx, col_idx, 15, currency_format)
                 
                 excel_buffer.seek(0)
                 
@@ -1249,4 +1246,3 @@ if st.button("🔍 Extract Guidance"):
                 )
             else:
                 st.warning("No guidance data extracted.")
-
