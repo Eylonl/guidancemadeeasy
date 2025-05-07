@@ -556,15 +556,7 @@ def safe_currency_to_float(x):
         return x  # Return original value if conversion fails
 
 def format_dataframe_for_excel(df):
-    """
-    Function to properly format a dataframe for Excel export with improved error handling.
-    
-    Args:
-        df (DataFrame): The input dataframe to format
-        
-    Returns:
-        DataFrame: A new dataframe with appropriate formatting for Excel export
-    """
+    """Function to properly format a dataframe for Excel export"""
     if df is None or df.empty:
         return pd.DataFrame()  # Return empty dataframe instead of None
         
@@ -610,6 +602,11 @@ def format_dataframe_for_excel(df):
                     pass
         
         return excel_df
+        
+    except Exception as e:
+        # If any unexpected error occurs, return the original dataframe
+        st.warning(f"Error formatting dataframe: {str(e)}")
+        return df
         
     except Exception:
         # If any unexpected error occurs, return the original dataframe
