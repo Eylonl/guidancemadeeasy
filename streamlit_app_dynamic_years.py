@@ -1025,11 +1025,6 @@ if st.button("🔍 Extract Guidance"):
                             # Apply a final consistency check to fix any remaining issues with negative ranges
                             df = check_range_consistency(df)
                             
-                            # Ensure the PeriodType column exists 
-                            # (should come from model but this is a fallback)
-                            if 'PeriodType' not in df.columns:
-                                df['PeriodType'] = "Unknown"
-                            
                             # Add metadata columns
                             df["FilingDate"] = date_str
                             df["8K_Link"] = url
@@ -1060,7 +1055,7 @@ if st.button("🔍 Extract Guidance"):
                 st.subheader("🔍 Preview of Extracted Guidance")
                 
                 # Select the most relevant columns for display
-                display_cols = ["Metric", "Value", "Period", "PeriodType", "Low", "High", "Average", "FilingDate", "Model_Used"]
+                display_cols = ["Metric", "Value", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
                 display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
                 
                 # Apply custom formatting when displaying
