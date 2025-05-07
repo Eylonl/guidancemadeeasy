@@ -1,5 +1,4 @@
 
- 
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -64,7 +63,6 @@ def extract_number(token: str):
         return -val if is_negative else val
     except:
         return None
-
 
 def format_percent(val):
     """Format a value as a percentage with consistent decimal places"""
@@ -571,12 +569,7 @@ I need these to be Python functions that I can directly add to my code.
         st.info("💡 Applying GPT-suggested formatting and standardization improvements")
         formatting_advice = response.choices[0].message.content
         
-        # Display the advice in a collapsible section
-        with st.expander("Show GPT formatting recommendations"):
-            st.write(formatting_advice)
-            
-        # Parse and apply the code snippets from GPT (this would require additional logic)
-        # For now, let's return the original dataframe and let the user implement the suggestions
+        # Return the original dataframe and formatting advice
         return df, formatting_advice
         
     except Exception as e:
@@ -753,38 +746,6 @@ def find_guidance_paragraphs(text):
         )
     
     return formatted_paragraphs, found_paragraphs
-
-st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
-st.title("📄 SEC 8-K Guidance Extractor")
-
-# Inputs
-ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
-api_key = st.text_input("Enter OpenAI API Key", type="password")
-
-# Add model selection dropdown
-openai_models = {
-    "GPT-4 Turbo": "gpt-4-turbo-preview",
-    "GPT-4": "gpt-4",
-    "GPT-3.5 Turbo": "gpt-3.5-turbo"
-}
-selected_model = st.selectbox(
-    "Select OpenAI Model",
-    list(openai_models.keys()),
-    index=0  # Default to first option (GPT-4 Turbo)
-)
-
-# Both filter options displayed at the same time
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
-quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
-
-@st.cache_data(show_spinner=False)
-def lookup_cik(ticker):
-    headers = {'User-Agent': 'Your Name Contact@domain.com'}
-    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
-    data = res.json()
-    for entry in data.values():
-        if entry["ticker"].upper() == ticker:
-            return str(entry["cik_str"]).zfill(10)
 
 def get_fiscal_year_end(ticker, cik):
     """
@@ -1042,6 +1003,41 @@ def get_ex99_1_links(cik, accessions):
                     break
     return links
 
+# Initialize Streamlit app
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("📄 SEC 8-K Guidance Extractor")
+
+# Inputs
+ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
+api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+# Add model selection dropdown
+openai_models = {
+    "GPT-4 Turbo": "gpt-4-turbo-preview",
+    "GPT-4": "gpt-4",
+    "GPT-3.5 Turbo": "gpt-3.5-turbo"
+}
+selected_model = st.selectbox(
+    "Select OpenAI Model",
+    list(openai_models.keys()),
+    index=0  # Default to first option (GPT-4 Turbo)
+)
+
+# Both filter options displayed at the same time
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
+
+# Decorate with cache to improve performance
+@st.cache_data(show_spinner=False)
+def lookup_cik(ticker):
+    headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+    data = res.json()
+    for entry in data.values():
+        if entry["ticker"].upper() == ticker:
+            return str(entry["cik_str"]).zfill(10)
+
+# Main execution button
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -1186,11 +1182,9 @@ if st.button("🔍 Extract Guidance"):
                 if api_key:
                     combined, formatting_advice = enhance_guidance_formatting(combined, client, model_id)
                     
-                    # If GPT provided useful formatting advice, display implementation buttons
+                    # If GPT provided useful formatting advice
                     if formatting_advice:
                         st.info("💡 GPT provided Excel formatting advice to properly type numbers, percentages, and currency values")
-                        with st.expander("Show GPT Excel formatting recommendations"):
-                            st.write(formatting_advice)
                 
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
