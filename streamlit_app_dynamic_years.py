@@ -458,6 +458,9 @@ def standardize_metrics(df):
     if 'Metric' not in df.columns:
         return df  # Return unchanged if no Metric column
     
+    # Create a deep copy to avoid modifying the original DataFrame
+    df = df.copy()
+    
     # Create a dictionary to map patterns to standardized metric names
     metric_patterns = {
         # EPS PATTERNS
@@ -1110,6 +1113,11 @@ if st.button("🔍 Extract Guidance"):
                             # Apply metric standardization
                             df = standardize_metrics(df)
                             
+                            # Filter to keep only expected columns
+                            expected_columns = ['Metric', 'Value', 'Period', 'PeriodType', 'Low', 'High', 'Average']
+                            existing_columns = [col for col in expected_columns if col in df.columns]
+                            df = df[existing_columns]
+                            
                             # Add metadata columns
                             df["FilingDate"] = date_str
                             df["8K_Link"] = url
@@ -1134,7 +1142,19 @@ if st.button("🔍 Extract Guidance"):
                     st.warning(f"Could not process: {url}. Error: {str(e)}")
 
             if results:
+                # Combine all results
                 combined = pd.concat(results, ignore_index=True)
+                
+                # Define all expected columns in the final output
+                all_expected_columns = [
+                    "Metric", "Value", "Period", "PeriodType", 
+                    "Low", "High", "Average", "FilingDate", 
+                    "8K_Link", "Model_Used"
+                ]
+                
+                # Only keep columns that we expect and that exist in the DataFrame
+                final_columns = [col for col in all_expected_columns if col in combined.columns]
+                combined = combined[final_columns]
                 
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
