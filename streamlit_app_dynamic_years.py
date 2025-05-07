@@ -143,8 +143,7 @@ def parse_value_range(text: str):
         hi = extract_number(hi_text)
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
-
-    # 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
+# 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
     dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
     if dollar_to_range:
         lo = extract_number(dollar_to_range.group(1))
@@ -260,8 +259,8 @@ def correct_value_signs(df):
             (re.search(r'^\d', numeric_repr.strip()) and not 
              (numeric_repr.startswith('(') and numeric_repr.endswith(')')))
         )
-        
-        # Look for explicit positive indicators in surrounding context
+
+# Look for explicit positive indicators in surrounding context
         has_positive_context = (
             not is_explicitly_negative and
             re.search(r'\b(?:growth|increase|up|positive|profit|gain)\b', value_text, re.I) and
@@ -567,15 +566,9 @@ I need these to be Python functions that I can directly add to my code.
             temperature=0.3,
         )
         
-        st.info("💡 Applying GPT-suggested formatting and standardization improvements")
         formatting_advice = response.choices[0].message.content
         
-        # Display the advice in a collapsible section
-        with st.expander("Show GPT formatting recommendations"):
-            st.write(formatting_advice)
-            
-        # Parse and apply the code snippets from GPT (this would require additional logic)
-        # For now, let's return the original dataframe and let the user implement the suggestions
+        # Return the formatting advice without displaying it
         return df, formatting_advice
         
     except Exception as e:
@@ -858,8 +851,8 @@ def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fisca
     quarter_info = quarters[quarter_num]
     start_month = quarter_info['start_month']
     end_month = quarter_info['end_month']
-    
-    # Determine if the quarter spans calendar years
+
+# Determine if the quarter spans calendar years
     spans_calendar_years = end_month < start_month
     
     # Determine the calendar year for each quarter
@@ -955,8 +948,8 @@ def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
                 date = datetime.strptime(date_str, "%Y-%m-%d")
                 if date >= cutoff:
                     accessions.append((accession, date_str))
-    
-    elif specific_quarter:
+
+elif specific_quarter:
         # Parse quarter and year from input - handle various formats
         # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
         match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:\s*FY\s*|\s*)?(\d{2}|\d{4})', specific_quarter.upper())
@@ -1141,7 +1134,7 @@ if st.button("🔍 Extract Guidance"):
                             # Apply GAAP/non-GAAP split
                             df = split_gaap_non_gaap(df)
                             
-                            # Apply metric standardization
+                            # Apply metric standardization - NEW STEP
                             df = standardize_metrics(df)
                             
                             # For rows that originally had % in the Value column, make sure Low, High, Average have % too
@@ -1180,9 +1173,12 @@ if st.button("🔍 Extract Guidance"):
             if results:
                 combined = pd.concat(results, ignore_index=True)
                 
-                # Still get GPT advice but don't display it
+                # Still get GPT formatting advice but don't display it to the user
+                # The advice will be stored in formatting_advice variable but not shown in UI
                 if api_key:
-                    combined, _ = enhance_guidance_formatting(combined, client, model_id)
+                    combined, formatting_advice = enhance_guidance_formatting(combined, client, model_id)
+                    # Save the formatting advice to a session state variable in case needed later
+                    st.session_state['formatting_advice'] = formatting_advice
                 
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
@@ -1206,12 +1202,45 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-                # Format the dataframe for Excel
-                excel_df = format_dataframe_for_excel(combined)
+                # Prepare Excel export with proper percent formatting
+                excel_df = combined.copy()
+                
+                # Convert percentage strings to numeric values for Excel
+                for col in ['Low', 'High', 'Average']:
+                    if col in excel_df.columns:
+                        # Convert percentage strings to numeric values (as decimals)
+                        excel_df[col] = excel_df[col].apply(
+                            lambda x: float(str(x).replace('%', '')) / 100 if isinstance(x, str) and '%' in x 
+                            else x
+                        )
                 
                 # Add download button
                 excel_buffer = io.BytesIO()
-                excel_df.to_excel(excel_buffer, index=False)
+                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                    excel_df.to_excel(writer, index=False, sheet_name='Guidance')
+                    
+                    # Access the XlsxWriter workbook and worksheet objects
+                    workbook = writer.book
+                    worksheet = writer.sheets['Guidance']
+                    
+                    # Create formats for percentages and currency
+                    percent_format = workbook.add_format({'num_format': '0.0%'})
+                    currency_format = workbook.add_format({'num_format': '$#,##0.00'})
+                    
+                    # Apply formats based on content
+                    for col_idx, col_name in enumerate(excel_df.columns):
+                        if col_name in ['Low', 'High', 'Average']:
+                            # Set column width
+                            worksheet.set_column(col_idx, col_idx, 12)
+                            
+                            # Apply formatting based on the content pattern in the Value column
+                            if excel_df['Value'].astype(str).str.contains('%').any():
+                                worksheet.set_column(col_idx, col_idx, 12, percent_format)
+                            elif excel_df['Value'].astype(str).str.contains('\$').any():
+                                worksheet.set_column(col_idx, col_idx, 15, currency_format)
+                
+                excel_buffer.seek(0)
+                
                 st.download_button(
                     "📥 Download Excel", 
                     data=excel_buffer.getvalue(), 
@@ -1220,3 +1249,4 @@ if st.button("🔍 Extract Guidance"):
                 )
             else:
                 st.warning("No guidance data extracted.")
+
