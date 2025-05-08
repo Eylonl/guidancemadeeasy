@@ -45,7 +45,7 @@ def fix_metrics_with_gpt(df, client, model_name):
 STEP 1: IDENTIFY CORE METRIC TYPE
 - First, determine if the metric is:
   * A per share metric (contains "per share")
-  * A revenue metric (contains "revenue")
+  * A revenue metric (contains "revenue" or "sales")
   * A net income metric (contains "net income")
   * An EBITDA metric (contains "EBITDA")
   * Another metric type
@@ -64,11 +64,15 @@ STEP 3: STANDARDIZE METRIC NAMES
   * "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
   * "Adjusted Net Income per Share" → "Non-GAAP EPS"
   * "GAAP Net Income per Share" → "GAAP EPS"
-- For revenue metrics:
-  * ALL revenue metrics become simply "Revenue"
+- For revenue/sales metrics (ONLY if it contains "revenue" or "sales"):
+  * "GAAP Revenue" → "Revenue"
+  * "Non-GAAP Revenue" → "Revenue"
+  * "Adjusted Revenue" → "Revenue"
+  * "Net Sales" → "Revenue"
 - For adjusted metrics:
   * Replace "Adjusted" with "Non-GAAP" EXCEPT for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
 - DO NOT CHANGE "Free Cash Flow per Share" or other non-earnings per share metrics
+- DO NOT CHANGE any metric to "Revenue" unless it actually contains the word "revenue" or "sales"
 
 EXAMPLES OF COMPLETE TRANSFORMATIONS:
 - "Non-GAAP Net Income attributable to BlackLine" → "Non-GAAP Net Income"
@@ -77,6 +81,10 @@ EXAMPLES OF COMPLETE TRANSFORMATIONS:
 - "GAAP Revenue attributable to BlackRock" → "Revenue"
 - "Adjusted Revenue" → "Revenue"
 - "Free Cash Flow per Share attributable to Shareholders" → "Free Cash Flow per Share"
+- "Billings" → "Billings" (NOT "Revenue")
+- "ARR" → "ARR" (NOT "Revenue")
+
+IMPORTANT: DO NOT change metrics like "ARR", "Billings", "Bookings", etc. to "Revenue" unless they explicitly contain the word "revenue" or "sales".
 
 For each metric below, respond with ONLY the fixed version after applying all steps above:
 
@@ -112,21 +120,23 @@ For each metric below, respond with ONLY the fixed version after applying all st
         for original, fixed in zip(unique_metrics, processed_lines):
             fixed_metrics[original] = fixed
     
-    # Create a copy of the dataframe to avoid modifying the original during iteration
+    # Additional safety check for blank period_type rows
     processed_df = df.copy()
     
-    # Apply fixes selectively based on the period_type
+    # First apply the GPT fixes to all rows
     for idx, row in processed_df.iterrows():
         original_metric = row['metric']
         fixed_metric = fixed_metrics.get(original_metric, original_metric)
         
-        # Only apply "Revenue" standardization if Period Type is not blank
-        if fixed_metric == 'Revenue' and ('period_type' in df.columns) and (pd.isna(row['period_type']) or row['period_type'] == ''):
-            # Keep original metric name if Period Type is blank
-            processed_df.loc[idx, 'metric'] = original_metric
+        # Override to keep original metric if:
+        # 1. The fixed metric is "Revenue" AND
+        # 2. The period_type is blank
+        if (fixed_metric == 'Revenue' and 
+            'period_type' in processed_df.columns and 
+            (pd.isna(row['period_type']) or str(row['period_type']).strip() == '')):
+            processed_df.at[idx, 'metric'] = original_metric
         else:
-            # Otherwise use the fixed metric name
-            processed_df.loc[idx, 'metric'] = fixed_metric
+            processed_df.at[idx, 'metric'] = fixed_metric
     
     return processed_df
     
