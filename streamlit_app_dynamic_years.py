@@ -31,7 +31,7 @@ def format_dollar(val):
 
 def fix_metrics_with_gpt(df, client, model_name):
     """
-    Use GPT to directly fix metric names.
+    Use GPT to directly fix metric names with an extensive standardization list.
     """
     if 'metric' not in df.columns or df.empty:
         return df
@@ -39,14 +39,66 @@ def fix_metrics_with_gpt(df, client, model_name):
     # Get unique metrics to reduce API calls
     unique_metrics = df['metric'].unique().tolist()
     
-    # Create a simple prompt for GPT
-    prompt = """Fix these financial metric names:
-1. Always use "Non-GAAP" not "Non-gaap"
-2. Use "Non-GAAP EPS" not "Non-gaap Net EPS"
-3. Remove parenthetical phrases like "(loss)" or "(income)"
-4. Ensure proper capitalization (GAAP, EPS, EBITDA, etc.)
+    # Create a more specific prompt for GPT with extensive standardization list
+    prompt = """Fix these financial metric names following these exact rules:
 
-Here are the metrics to fix:
+1. Always use proper capitalization for acronyms: "Non-GAAP", "GAAP", "EPS", "EBITDA", "EBIT", "FCF", "ARR", etc.
+2. Remove parenthetical phrases like "(loss)" or "(income)" 
+3. Remove phrases like "attributable to [company name]" or "attributable to common stockholders"
+4. Standardize to these canonical forms, but ONLY if they match the specific metric type:
+
+EARNINGS METRICS:
+- "Non-GAAP EPS" for non-GAAP earnings per share or non-GAAP net income per share
+- "GAAP EPS" for GAAP earnings per share or GAAP net income per share
+- "Diluted EPS" for diluted earnings per share (if not specified as GAAP or Non-GAAP)
+- "Non-GAAP Net Income" for any non-GAAP net income/earnings/profit
+- "GAAP Net Income" for any GAAP net income/earnings/profit
+
+OPERATING METRICS:
+- "Non-GAAP Operating Income" for any non-GAAP operating income/profit/earnings
+- "GAAP Operating Income" for any GAAP operating income/profit/earnings
+- "Non-GAAP Operating Margin" for any non-GAAP operating margin
+- "GAAP Operating Margin" for any GAAP operating margin
+- "Operating Cash Flow" for operating cash flow or cash flow from operations
+
+REVENUE METRICS:
+- "Revenue" for revenue, net revenue, net sales, total revenue
+- "Organic Revenue" for organic revenue, organic growth
+- "Billings" for billings or bookings
+- "ARR" for Annual Recurring Revenue or Annualized Recurring Revenue
+- "RPO" for Remaining Performance Obligation
+
+MARGIN METRICS:
+- "Gross Margin" for any gross margin metric
+- "Non-GAAP Gross Margin" for any non-GAAP gross margin metric
+- "GAAP Gross Margin" for any GAAP gross margin metric
+
+EBITDA METRICS:
+- "Adjusted EBITDA" for adjusted EBITDA or adj. EBITDA
+- "EBITDA" for EBITDA (earnings before interest, taxes, depreciation and amortization)
+- "Adjusted EBITDA Margin" for adjusted EBITDA margin or adj. EBITDA margin
+
+CASH FLOW METRICS:
+- "Free Cash Flow" for free cash flow or FCF
+- "Free Cash Flow per Share" for free cash flow per share
+- "Free Cash Flow Margin" for free cash flow margin
+
+OTHER COMMON METRICS:
+- "Tax Rate" for effective tax rate or tax rate
+- "R&D Expenses" for research and development expenses
+- "S&M Expenses" for sales and marketing expenses
+- "G&A Expenses" for general and administrative expenses
+- "CapEx" for capital expenditures
+- "Headcount" for employee count or number of employees
+- "Customer Count" for number of customers or customer count
+- "NRR" for Net Revenue Retention or Net Dollar Retention
+
+5. IMPORTANT: DO NOT change the fundamental metric type. For example:
+   - "Free Cash Flow per Share" should remain "Free Cash Flow per Share", not "Non-GAAP EPS"
+   - "Adjusted EBITDA" should remain "Adjusted EBITDA", not "Non-GAAP Net Income"
+   - "ARR Growth" should remain "ARR Growth", not just "ARR" or "Revenue"
+
+For each metric below, respond with the fixed version:
 """
     
     # Add metrics to the prompt
@@ -71,14 +123,25 @@ Here are the metrics to fix:
             fixed = parts[1].strip()
             fixed_metrics[original] = fixed
     
-    # For any metrics not properly parsed, try a fallback approach
+    # Apply basic fixes for any metrics that weren't properly parsed
     for metric in unique_metrics:
         if metric not in fixed_metrics:
             # Basic fixes
-            fixed = metric.replace('(loss)', '').replace('(income)', '')
+            fixed = metric
+            # Remove parenthetical phrases and attributable phrases
+            fixed = re.sub(r'\s*\([^)]*\)\s*', ' ', fixed)
+            fixed = re.sub(r'\s+attributable to.*', '', fixed)
+            
+            # Fix capitalization for common terms
             fixed = fixed.replace('gaap', 'GAAP')
-            fixed = fixed.replace('Non-GAAP', 'Non-GAAP')  # Fix potential double replacement
+            fixed = fixed.replace('non-GAAP', 'Non-GAAP')  # Fix potential double replacement
             fixed = fixed.replace('eps', 'EPS')
+            fixed = fixed.replace('ebitda', 'EBITDA')
+            fixed = fixed.replace('ebit', 'EBIT')
+            fixed = fixed.replace('fcf', 'FCF')
+            fixed = fixed.replace('arr', 'ARR')
+            fixed = fixed.replace('rpo', 'RPO')
+            
             fixed_metrics[metric] = fixed.strip()
     
     # Apply fixes to the dataframe
