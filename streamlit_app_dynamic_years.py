@@ -56,6 +56,7 @@ RULES TO APPLY IN THIS EXACT ORDER:
    - Remove any phrases like "attributable to [Company]" or "attributable to common stockholders"
    - Example: "GAAP Net Income attributable to BlackLine" → "GAAP Net Income"
    - Example: "Non-GAAP net income per share attributable to Blackline" → "Non-GAAP net income per share"
+   - PLEASE NOTE if "Net Income per share attributable to BlackLine", you need to realize that net income per share refers to EPS
 
 2. PER SHARE METRICS:
    - ANY metric containing BOTH "net income" AND "per share" (in any capitalization) should be standardized:
