@@ -50,7 +50,7 @@ def fix_metrics_with_gpt(df, client, model_name):
     # Create a clearer prompt that explicitly addresses the EPS issue with attributions
     prompt = """Fix these financial metric names following these EXACT rules in order:
 
-1. CRITICAL: If you see any attributions in the metrics (such as: Net income attributable to company) leave the metrics as is and don't make any adjustments
+1. CRITICAL: If you see any attributions in the metrics (such as: Net income attributable to company or Net income per share attributable to company) leave the metrics as is and don't make any adjustments
     
 2. EPS Metrics:
    - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
