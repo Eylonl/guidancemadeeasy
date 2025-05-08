@@ -307,8 +307,8 @@ def correct_value_signs(df):
 
 def check_range_consistency(df):
     """
-    Fixed function to check for and fix inconsistencies in range parsing.
-    More cautious about applying corrections to avoid false negatives.
+    Improved function to check for and fix inconsistencies in range parsing.
+    Fixed to properly handle mixed-sign ranges like "$(1) million to $1 million".
     """
     for idx, row in df.iterrows():
         # Get low and high values if they exist
@@ -338,28 +338,29 @@ def check_range_consistency(df):
         # Get original value text for context
         original_value = str(row.get('Value', ''))
         
-        # Only fix cases where low and high signs are inconsistent
+        # Handle mixed sign cases (low negative, high positive)
         if low_val < 0 and high_val > 0:
-            # Check for explicit mixed-sign range patterns like "-1 to 1"
-            explicit_negative_to_positive = re.search(r'-\d+(?:\.\d+)?\s*(?:to|[-–—~])\s*\d+(?:\.\d+)?[^-]', original_value, re.I)
+            # Check for explicit patterns showing it's intentionally mixed signs
             
-            # If we have a mixed-sign range pattern, PRESERVE it and don't make any changes
-            if explicit_negative_to_positive:
-                # This is intentionally a mixed sign range - keep it as is
+            # Pattern for "$(1) million to $1 million" or similar mixed ranges
+            mixed_parenthetical_pattern = re.search(r'\$?\(\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*\$?\s*\d+', original_value, re.I)
+            
+            # Pattern for "-$1 million to $1 million" or similar mixed ranges with minus sign
+            mixed_minus_pattern = re.search(r'-\s*\$?\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*\$?\s*\d+', original_value, re.I)
+            
+            # If we have a clear mixed-sign range pattern, don't change anything (keep high positive)
+            if mixed_parenthetical_pattern or mixed_minus_pattern:
+                # Intentionally a mixed sign range - do not modify high value
                 continue
                 
-            # For other cases, look for VERY SPECIFIC indicators that both should be negative
-            # These are much more restrictive than the original function's checks
+            # For other cases, more restrictive checks for when both should be negative
             
-            # Check for parenthetical notation around numbers
-            parenthetical_notation = re.search(r'\(\s*\$?\s*\d+(?:\.\d+)?\s*\)', original_value)
+            # Check for parenthetical notation around both numbers or minus signs on both numbers
+            both_parenthetical = re.search(r'\(\s*\$?\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*\(\s*\$?\s*\d+(?:\.\d+)?\s*\)', original_value, re.I)
+            both_minus = re.search(r'-\s*\$?\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*-\s*\$?\s*\d+', original_value, re.I)
             
-            # Check for both bounds explicitly having minus signs
-            both_with_minus = re.search(r'-\d+(?:\.\d+)?\s*(?:to|[-–—~])\s*-\d+(?:\.\d+)?', original_value, re.I)
-            
-            # Only make both negative if we have VERY CLEAR indicators both should be negative
-            # This is much more restrictive than the original function
-            should_both_be_negative = parenthetical_notation or both_with_minus
+            # ONLY make both negative if we have VERY CLEAR indicators both should be negative
+            should_both_be_negative = both_parenthetical or both_minus
             
             if should_both_be_negative:
                 # Both values should be negative - fix the high value
