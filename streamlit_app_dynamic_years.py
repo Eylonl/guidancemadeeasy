@@ -31,7 +31,7 @@ def format_dollar(val):
 
 def fix_metrics_with_gpt(df, client, model_name):
     """
-    Use GPT to directly fix metric names with an extensive standardization list.
+    Use GPT to directly fix metric names with straightforward standardization rules.
     """
     if 'metric' not in df.columns or df.empty:
         return df
@@ -39,83 +39,26 @@ def fix_metrics_with_gpt(df, client, model_name):
     # Get unique metrics to reduce API calls
     unique_metrics = df['metric'].unique().tolist()
     
-    # Create a more specific prompt for GPT with extensive standardization list
+    # Create a clear prompt for GPT with simple standardization rules
     prompt = """Fix these financial metric names following these exact rules:
 
-1. Always use proper capitalization for acronyms: "Non-GAAP", "GAAP", "EPS", "EBITDA", "EBIT", "FCF", "ARR", etc.
-2. Remove parenthetical phrases like "(loss)" or "(income)" 
-3. Remove phrases like "attributable to [company name]" or "attributable to common stockholders"
-4. Standardize to these canonical forms, but ONLY if they match the specific metric type:
+1. Use proper capitalization for acronyms: "Non-GAAP", "GAAP", "EPS", "EBITDA", etc.
 
-ADJUSTED METRICS RULE:
-- Any metric with "Adjusted" in the name should be converted to use "Non-GAAP" instead, EXCEPT for "Adjusted EBITDA" and "Adjusted EBITDA Margin" which keep their names
-- Examples:
-  - "Adjusted Net Income" → "Non-GAAP Net Income"
-  - "Adjusted Operating Income" → "Non-GAAP Operating Income"
-  - "Adjusted EPS" → "Non-GAAP EPS"
-  - "Adjusted Revenue" → "Non-GAAP Revenue"
-  - BUT KEEP: "Adjusted EBITDA" and "Adjusted EBITDA Margin" as is
-
-REVENUE METRICS:
-- "Revenue" for ANY revenue metric, including GAAP Revenue, Total Revenue, Total GAAP Revenue, Net Revenue, etc.
-- "Non-GAAP Revenue" for any adjusted revenue metrics
-- "Organic Revenue" for organic revenue, organic growth
-- "Billings" for billings or bookings
-- "ARR" for Annual Recurring Revenue or Annualized Recurring Revenue
-- "RPO" for Remaining Performance Obligation
-
-EARNINGS METRICS:
-- "Non-GAAP EPS" for non-GAAP earnings per share or non-GAAP net income per share or adjusted earnings per share
-- "GAAP EPS" for GAAP earnings per share or GAAP net income per share
-- "Diluted EPS" for diluted earnings per share (if not specified as GAAP or Non-GAAP)
-- "Non-GAAP Net Income" for any non-GAAP net income/earnings/profit or adjusted net income/earnings/profit (but NOT for per share metrics)
-- "GAAP Net Income" for any GAAP net income/earnings/profit (but NOT for per share metrics)
-
-OPERATING METRICS:
-- "Non-GAAP Operating Income" for any non-GAAP operating income/profit/earnings or adjusted operating income/profit/earnings
-- "GAAP Operating Income" for any GAAP operating income/profit/earnings
-- "Non-GAAP Operating Margin" for any non-GAAP operating margin or adjusted operating margin
-- "GAAP Operating Margin" for any GAAP operating margin
-- "Operating Cash Flow" for operating cash flow or cash flow from operations
-
-MARGIN METRICS:
-- "Gross Margin" for any gross margin metric
-- "Non-GAAP Gross Margin" for any non-GAAP gross margin metric or adjusted gross margin
-- "GAAP Gross Margin" for any GAAP gross margin metric
-
-EBITDA METRICS:
-- "Adjusted EBITDA" for adjusted EBITDA or adj. EBITDA (keep "Adjusted" in this specific case)
-- "EBITDA" for EBITDA (earnings before interest, taxes, depreciation and amortization)
-- "Adjusted EBITDA Margin" for adjusted EBITDA margin or adj. EBITDA margin (keep "Adjusted" in this specific case)
-
-CASH FLOW METRICS:
-- "Free Cash Flow" for free cash flow or FCF
-- "Free Cash Flow per Share" for free cash flow per share
-- "Free Cash Flow Margin" for free cash flow margin
-
-OTHER COMMON METRICS:
-- "Tax Rate" for effective tax rate or tax rate
-- "Non-GAAP Tax Rate" for adjusted tax rate or non-GAAP effective tax rate
-- "R&D Expenses" for research and development expenses
-- "S&M Expenses" for sales and marketing expenses
-- "G&A Expenses" for general and administrative expenses
-- "CapEx" for capital expenditures
-- "Headcount" for employee count or number of employees
-- "Customer Count" for number of customers or customer count
-- "NRR" for Net Revenue Retention or Net Dollar Retention
-
-5. IMPORTANT: DO NOT change the fundamental metric type. For example:
-   - "Free Cash Flow per Share" should remain "Free Cash Flow per Share", not "Non-GAAP EPS"
-   - "Adjusted EBITDA" should remain "Adjusted EBITDA" (exception to the adjusted rule), not "Non-GAAP Net Income"
-   - "ARR Growth" should remain "ARR Growth", not just "ARR" or "Revenue"
-   - "Non-GAAP Net Income per Share" should be standardized to "Non-GAAP EPS", not "Non-GAAP Net Income"
-   - "Adjusted Operating Income" should be standardized to "Non-GAAP Operating Income"
-
-6. PER SHARE METRICS: Any metric that includes "per share" in the name should be mapped to the appropriate EPS category:
+2. FOR PER SHARE METRICS:
+   - ANY metric that includes "per share" or is about earnings per share should be categorized as EPS
    - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
    - "Adjusted Net Income per Share" → "Non-GAAP EPS"
-   - "GAAP Net Income per Share" → "GAAP EPS" 
-   - "Earnings per Share" → "Diluted EPS" (unless specified as GAAP or Non-GAAP)
+   - "GAAP Net Income per Share" → "GAAP EPS"
+   - "Earnings per Share" → "Diluted EPS" (if not specified as GAAP or Non-GAAP)
+
+3. FOR ADJUSTED METRICS:
+   - Replace "Adjusted" with "Non-GAAP" for all metrics EXCEPT Adjusted EBITDA
+   - "Adjusted Net Income" → "Non-GAAP Net Income"
+   - "Adjusted Operating Income" → "Non-GAAP Operating Income"
+   - "Adjusted Revenue" → "Non-GAAP Revenue"
+   - BUT KEEP: "Adjusted EBITDA" and "Adjusted EBITDA Margin" as is
+
+4. IMPORTANT: If a metric contains "per share" or "EPS" in any form, it MUST be classified as some form of EPS, not as Net Income
 
 For each metric below, respond with the fixed version:
 """
@@ -141,48 +84,6 @@ For each metric below, respond with the fixed version:
             original = parts[0].strip().replace('- ', '')
             fixed = parts[1].strip()
             fixed_metrics[original] = fixed
-    
-    # Apply basic fixes for any metrics that weren't properly parsed
-    for metric in unique_metrics:
-        if metric not in fixed_metrics:
-            # Basic fixes
-            fixed = metric
-            # Remove parenthetical phrases and attributable phrases
-            fixed = re.sub(r'\s*\([^)]*\)\s*', ' ', fixed)
-            fixed = re.sub(r'\s+attributable to.*', '', fixed)
-            
-            # Fix capitalization for common terms
-            fixed = fixed.replace('gaap', 'GAAP')
-            fixed = fixed.replace('non-GAAP', 'Non-GAAP')  # Fix potential double replacement
-            fixed = fixed.replace('eps', 'EPS')
-            fixed = fixed.replace('ebitda', 'EBITDA')
-            fixed = fixed.replace('ebit', 'EBIT')
-            fixed = fixed.replace('fcf', 'FCF')
-            fixed = fixed.replace('arr', 'ARR')
-            fixed = fixed.replace('rpo', 'RPO')
-            
-            # Convert "Adjusted" to "Non-GAAP" with exceptions for EBITDA
-            lower_fixed = fixed.lower()
-            if 'adjusted' in lower_fixed and 'ebitda' not in lower_fixed:
-                # Replace "Adjusted" with "Non-GAAP" except for EBITDA metrics
-                fixed = re.sub(r'(?i)adjusted', 'Non-GAAP', fixed)
-            
-            # Handle per share metrics appropriately
-            if 'per share' in lower_fixed or 'per diluted share' in lower_fixed:
-                if 'non-gaap' in lower_fixed or 'adjusted' in lower_fixed:
-                    fixed = 'Non-GAAP EPS'
-                elif 'gaap' in lower_fixed:
-                    fixed = 'GAAP EPS'
-                else:
-                    fixed = 'Diluted EPS'
-            # Basic revenue standardization as fallback
-            elif 'revenue' in lower_fixed:
-                if 'non-gaap' in lower_fixed or 'adjusted' in lower_fixed:
-                    fixed = 'Non-GAAP Revenue'
-                else:
-                    fixed = 'Revenue'
-            
-            fixed_metrics[metric] = fixed.strip()
     
     # Apply fixes to the dataframe
     df['metric'] = df['metric'].apply(lambda x: fixed_metrics.get(x, x))
