@@ -533,7 +533,7 @@ def standardize_metrics(df):
                     return standard_name
         return metric_name  # Return original if no match
     
-    # Apply standardization to the Metric column
+    # Apply standardization to the Metric column only
     df['Metric'] = df['Metric'].apply(find_standardized_metric)
     
     return df
@@ -1110,13 +1110,8 @@ if st.button("🔍 Extract Guidance"):
                             # Apply a final consistency check to fix any remaining issues with negative ranges
                             df = check_range_consistency(df)
                             
-                            # Apply metric standardization
+                            # Apply metric standardization (only changes the Metric column)
                             df = standardize_metrics(df)
-                            
-                            # Filter to keep only expected columns
-                            expected_columns = ['Metric', 'Value', 'Period', 'PeriodType', 'Low', 'High', 'Average']
-                            existing_columns = [col for col in expected_columns if col in df.columns]
-                            df = df[existing_columns]
                             
                             # Add metadata columns
                             df["FilingDate"] = date_str
@@ -1145,15 +1140,20 @@ if st.button("🔍 Extract Guidance"):
                 # Combine all results
                 combined = pd.concat(results, ignore_index=True)
                 
-                # Define all expected columns in the final output
-                all_expected_columns = [
+                # Define the order of columns without removing any existing columns
+                primary_columns = [
                     "Metric", "Value", "Period", "PeriodType", 
                     "Low", "High", "Average", "FilingDate", 
                     "8K_Link", "Model_Used"
                 ]
                 
-                # Only keep columns that we expect and that exist in the DataFrame
-                final_columns = [col for col in all_expected_columns if col in combined.columns]
+                # Create a list with primary columns first, then any other columns that might exist
+                all_columns = primary_columns + [col for col in combined.columns if col not in primary_columns]
+                
+                # Filter to only include columns that actually exist in the DataFrame
+                final_columns = [col for col in all_columns if col in combined.columns]
+                
+                # Reorder columns without removing any
                 combined = combined[final_columns]
                 
                 # Preview the table
