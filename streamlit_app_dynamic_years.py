@@ -9,49 +9,7 @@ import re
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
-# After parsing the table from OpenAI's response:
-if table and "|" in table:
-    rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-    if len(rows) > 1:  # Check if we have header and at least one row of data
-        # First, standardize the column names
-        column_names = [c.strip() for c in rows[0]]
-        
-        # Create DataFrame with original column names
-        df = pd.DataFrame(rows[1:], columns=column_names)
-        
-        # Find the value column - it might be called "Value" or "Value or range"
-        value_column = None
-        for col in df.columns:
-            if "value" in col.lower():
-                value_column = col
-                break
-        
-        # If no value column found, we have a problem
-        if not value_column:
-            st.warning("⚠️ No value column found in the extracted data.")
-        else:
-            # Save the original values for later
-            original_values = df[value_column].copy()
-            
-            # Rename the value column to "Value" for consistent processing
-            if value_column != "Value":
-                df.rename(columns={value_column: "Value"}, inplace=True)
-            
-            # Normal processing happens here...
-            # (Parse low, high, average, apply corrections, etc.)
-            
-            # After all processing is done, but before adding metadata columns:
-            # Rename the "Value" column back to "Value or range"
-            if "Value" in df.columns:
-                df.rename(columns={"Value": "Value or range"}, inplace=True)
-                # Restore the original values
-                df["Value or range"] = original_values
-            
-            # Add metadata columns
-            df["FilingDate"] = date_str
-            df["8K_Link"] = url
-            df["Model_Used"] = selected_model
-            
+
 def extract_number(token: str):
     """
     Enhanced function to extract numeric values from text, with improved handling of 
