@@ -1071,13 +1071,8 @@ if st.button("🔍 Extract Guidance"):
                         if len(rows) > 1:  # Check if we have header and at least one row of data
                             df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                             
-                        # Save the original Value column to restore later
-if 'Value' in df.columns:
-    original_values = df['Value'].copy()
-    value_column_name = 'Value'
-else:
-    original_values = None
-    value_column_name = 'Value'  # Default name if not found
+                            # Save the original Value column to restore later
+                            original_values = df['Value'].copy() if 'Value' in df.columns else None
                             
                             # Store which rows have percentages or parenthetical values in the Value column
                             percentage_rows = []
@@ -1121,15 +1116,9 @@ else:
                             # Apply metric standardization (only changes the Metric column)
                             df = standardize_metrics(df)
                             
-                           # After all processing
-# Restore the original Value column with a consistent name "Value or Range"
-if original_values is not None:
-    # Remove existing Value column if it exists
-    if 'Value' in df.columns:
-        df = df.drop(columns=['Value'])
-    
-    # Add the original values as "Value or Range"
-    df["Value or Range"] = original_values
+                            # Restore the original Value column
+                            if original_values is not None:
+                                df['Value'] = original_values
                             
                             # Add metadata columns
                             df["FilingDate"] = date_str
@@ -1158,12 +1147,12 @@ if original_values is not None:
                 # Combine all results
                 combined = pd.concat(results, ignore_index=True)
                 
-              # Define the order of columns without removing any existing columns
-primary_columns = [
-    "Metric", "Value or Range", "Period", "PeriodType", 
-    "Low", "High", "Average", "FilingDate", 
-    "8K_Link", "Model_Used"
-]
+                # Define the order of columns without removing any existing columns
+                primary_columns = [
+                    "Metric", "Value", "Period", "PeriodType", 
+                    "Low", "High", "Average", "FilingDate", 
+                    "8K_Link", "Model_Used"
+                ]
                 
                 # Create a list with primary columns first, then any other columns that might exist
                 all_columns = primary_columns + [col for col in combined.columns if col not in primary_columns]
