@@ -28,95 +28,6 @@ def format_dollar(val):
         else:  # Small values, use 2 decimal places
             return f"${val:.2f}"
     return val
-
-def fix_metrics_with_gpt(df, client, model_name):
-    """
-    Use GPT to directly fix metric names with clear, simple standardization rules.
-    """
-    if 'metric' not in df.columns or df.empty:
-        return df
-    
-    # Create a list of metrics with their period_type to send to GPT
-    metric_list = []
-    for _, row in df.iterrows():
-        period_type = row.get('period_type', '') if 'period_type' in df.columns else ''
-        if pd.isna(period_type):
-            period_type = ''
-        metric_list.append((row['metric'], period_type))
-    
-    # Get unique metric-period_type pairs to reduce API calls
-    unique_metric_pairs = list(set(metric_list))
-    
-    # Create a clearer prompt that explicitly addresses the EPS issue with attributions
-    prompt = """Fix these financial metric names following these EXACT rules in order:
-
-1. CRITICAL: If you see any attributions in the metrics (such as: Net income attributable to company or Net income per share attributable to company) make sure to pay attention to the "per share" metric. For example: Net income attributable to company is Net Income and Net Income per share attributable to company is EPS.
-
-2. EPS Metrics:
-   - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
-   - "Adjusted Net Income per Share" → "Non-GAAP EPS"
-   - "GAAP Net Income per Share" → "GAAP EPS"
-
-3. ADJUSTED METRICS:
-   - Change "Adjusted" to "Non-GAAP" except for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
-   - Example: "Adjusted Net Income" → "Non-GAAP Net Income"
-
-4. REVENUE METRICS:
-   - Only standardize to "Revenue" if BOTH:
-     a) The original metric contains "revenue" or "sales" AND
-     b) The period_type is not blank
-   - If period_type is blank, ALWAYS keep the original metric name
-
-I'll give you a list of metrics with their period_type in this format: "Metric | Period Type"
-For each item, respond with ONLY the fixed metric name following ALL rules above.
-
-"""
-    
-    # Add the actual metrics to process
-    for i, (metric, period_type) in enumerate(unique_metric_pairs):
-        prompt += f"{i+1}. {metric} | {period_type}\n"
-        
-    # Ask GPT to fix the metrics
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-    )
-    
-    # Process the response - simple line-by-line parsing
-    fixed_metrics = {}
-    lines = response.choices[0].message.content.strip().split('\n')
-    
-    # Clean up each line and match with original metrics
-    processed_lines = []
-    for line in lines:
-        # Remove any numbering or prefixes
-        if '.' in line:
-            parts = line.split('.', 1)
-            if parts[0].strip().isdigit():
-                line = parts[1].strip()
-        processed_lines.append(line.strip())
-    
-    # Match with original metric_pairs
-    if len(processed_lines) == len(unique_metric_pairs):
-        for (metric, period_type), fixed in zip(unique_metric_pairs, processed_lines):
-            fixed_metrics[(metric, period_type)] = fixed
-    
-    # Apply fixes to the dataframe
-    result_df = df.copy()
-    for idx, row in result_df.iterrows():
-        period_type = row.get('period_type', '') if 'period_type' in df.columns else ''
-        if pd.isna(period_type):
-            period_type = ''
-        
-        metric = row['metric']
-        key = (metric, period_type)
-        
-        # Apply the fixed metric from GPT's response
-        if key in fixed_metrics:
-            result_df.at[idx, 'metric'] = fixed_metrics[key]
-    
-    return result_df
     
 def extract_guidance(text, ticker, client, model_name):
     """
@@ -686,9 +597,6 @@ if st.button("🔍 Extract Guidance"):
                                 # Rename back to standard naming
                                 if 'Value or range' in df.columns:
                                     df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
-                            
-                            # Use GPT to fix metric names
-                            df = fix_metrics_with_gpt(df, client, model_id)
                             
                             # Add metadata columns
                             df["filing_date"] = date_str
