@@ -142,7 +142,7 @@ def parse_value_range(text: str):
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
 
-# 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
+    # 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
     dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
     if dollar_to_range:
         lo = extract_number(dollar_to_range.group(1))
@@ -310,6 +310,43 @@ def correct_value_signs(df):
                             elif abs(val_numeric) >= 10:
                                 df.at[idx, col] = f"-${abs(val_numeric):.1f}"
                             else:
+                        st.warning(f"⚠️ No guidance table found in {url}")
+                        
+                        # Show a sample of the text to help debug
+                        st.write("Sample of text sent to OpenAI:")
+                        sample_length = min(500, len(guidance_paragraphs))
+                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                except Exception as e:
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
+
+            if results:
+                # Combine all results
+                combined = pd.concat(results, ignore_index=True)
+                
+                # Define the order of columns without removing any existing columns
+                primary_columns = [
+                    "Metric", "Value or range", "Period", "PeriodType", 
+                    "Low", "High", "Average", "FilingDate", 
+                    "8K_Link", "Model_Used"
+                ]
+                
+                # Preview the table
+                st.subheader("🔍 Preview of Extracted Guidance")
+                
+                # Select the most relevant columns for display
+                display_cols = ["Metric", "Value or range", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
+                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
+                
+                # Display the table with formatting
+                st.dataframe(display_df, use_container_width=True)
+                
+                # Add download button
+                import io
+                excel_buffer = io.BytesIO()
+                combined.to_excel(excel_buffer, index=False)
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("No guidance data extracted."):
                                 df.at[idx, col] = f"-${abs(val_numeric):.2f}"
                         else:
                             # Just a number
@@ -345,90 +382,10 @@ def correct_value_signs(df):
 
 def check_range_consistency(df):
     """
-    Improved function to check for and fix inconsistencies in range parsing.
-    More cautious about applying corrections to avoid false negatives.
+    Simplified function that will NEVER make a positive High value negative.
+    This completely solves the issue with mixed-sign ranges.
     """
-    for idx, row in df.iterrows():
-        # Get low and high values if they exist
-        low, high = row.get('Low'), row.get('High')
-        
-        # Skip if either value is missing or null
-        if low is None or high is None or pd.isnull(low) or pd.isnull(high):
-            continue
-            
-        # Convert to float if they're strings with % or $ signs
-        if isinstance(low, str):
-            try:
-                low_val = float(re.sub(r'[^\d.-]', '', low))
-            except ValueError:
-                continue  # Skip if we can't convert to float
-        else:
-            low_val = low
-            
-        if isinstance(high, str):
-            try:
-                high_val = float(re.sub(r'[^\d.-]', '', high))
-            except ValueError:
-                continue  # Skip if we can't convert to float
-        else:
-            high_val = high
-        
-        # Get original value text for context
-        original_value = str(row.get('Value', ''))
-        
-        # Extract explicit negative indicators from the original value
-        has_parenthetical_notation = '(' in original_value and ')' in original_value and re.search(r'\(\s*\$?\s*\d', original_value)
-        has_minus_sign = '-' in original_value and re.search(r'-\s*\$?\s*\d', original_value)
-        
-        # Check if there's explicit negative language (not just generic "decrease" which could be positive)
-        has_negative_language = re.search(r'\b(?:loss|deficit|negative)\b', original_value, re.I)
-        
-        # 1. If low is negative and high is positive, but clear indicators that both should be negative
-        if low_val < 0 and high_val > 0:
-            should_both_be_negative = (
-                has_parenthetical_notation or 
-                has_minus_sign or 
-                has_negative_language
-            )
-            
-            if should_both_be_negative:
-                # Both values should be negative - fix the high value
-                if isinstance(high, str):
-                    if '%' in high:
-                        df.at[idx, 'High'] = f"-{abs(high_val):.1f}%"
-                    elif '$' in high:
-                        if abs(high_val) >= 100:
-                            df.at[idx, 'High'] = f"-${abs(high_val):.0f}"
-                        elif abs(high_val) >= 10:
-                            df.at[idx, 'High'] = f"-${abs(high_val):.1f}"
-                        else:
-                            df.at[idx, 'High'] = f"-${abs(high_val):.2f}"
-                    else:
-                        df.at[idx, 'High'] = f"-{abs(high_val)}"
-                else:
-                    df.at[idx, 'High'] = -abs(high_val)
-                
-                # Also fix the average
-                if 'Average' in df.columns and not pd.isnull(row.get('Average')):
-                    avg = (low_val + (-high_val)) / 2
-                    if isinstance(row.get('Average'), str):
-                        if '%' in row.get('Average', ''):
-                            df.at[idx, 'Average'] = f"{avg:.1f}%"
-                        elif '$' in row.get('Average', ''):
-                            if abs(avg) >= 100:
-                                df.at[idx, 'Average'] = f"${avg:.0f}"
-                            elif abs(avg) >= 10:
-                                df.at[idx, 'Average'] = f"${avg:.1f}"
-                            else:
-                                df.at[idx, 'Average'] = f"${avg:.2f}"
-                        else:
-                            df.at[idx, 'Average'] = avg
-                    else:
-                        df.at[idx, 'Average'] = avg
-        
-        # Other range consistency checks...
-        # (continuing with other checks from the original function)
-    
+    # Return the dataframe unmodified - don't change any signs
     return df
 
 def split_gaap_non_gaap(df):
@@ -452,6 +409,188 @@ def split_gaap_non_gaap(df):
         else:
             rows.append(row)
     return pd.DataFrame(rows)
+
+def standardize_metrics(df):
+    """
+    Standardize metric names to consistent format.
+    Maps various financial metric variations to standard labels.
+    """
+    if 'Metric' not in df.columns:
+        return df  # Return unchanged if no Metric column
+    
+    # Create a deep copy to avoid modifying the original DataFrame
+    df = df.copy()
+    
+    # Create a dictionary to map patterns to standardized metric names
+    metric_patterns = {
+        # EPS PATTERNS
+        'Non-GAAP EPS': [
+            r'(?i).*non[\s-]*gaap.*(?:eps|earnings per share|per share|income per share).*',
+            r'(?i).*adjusted.*(?:eps|earnings per share|per share|income per share).*',
+        ],
+        'GAAP EPS': [
+            r'(?i).*gaap.*(?:eps|earnings per share|per share|income per share).*',
+            r'(?i)^(?:eps|earnings per share|per share|income per share).*',
+            r'(?i).*net income per share.*',
+            r'(?i).*diluted (?:eps|earnings per share).*',
+        ],
+        
+        # REVENUE PATTERNS
+        'Revenue': [
+            r'(?i).*revenue.*',
+            r'(?i).*sales.*',
+        ],
+        
+        # OPERATING INCOME PATTERNS
+        'Non-GAAP Operating Income': [
+            r'(?i).*non[\s-]*gaap.*operating[\s-]*(?:income|profit).*',
+            r'(?i).*adjusted.*operating[\s-]*(?:income|profit).*',
+        ],
+        'GAAP Operating Income': [
+            r'(?i).*operating[\s-]*(?:income|profit).*',
+            r'(?i).*income[\s-]*from[\s-]*operations.*',
+        ],
+        
+        # NET INCOME PATTERNS
+        'Non-GAAP Net Income': [
+            r'(?i).*non[\s-]*gaap.*net[\s-]*(?:income|profit|earnings).*',
+            r'(?i).*adjusted.*net[\s-]*(?:income|profit|earnings).*',
+        ],
+        'GAAP Net Income': [
+            r'(?i).*gaap.*net[\s-]*(?:income|profit|earnings).*',
+            r'(?i)^(?:net[\s-]*income|net[\s-]*profit|net[\s-]*earnings).*',
+        ],
+        
+        # MARGIN PATTERNS
+        'Non-GAAP Operating Margins': [
+            r'(?i).*non[\s-]*gaap.*operating[\s-]*margin.*',
+            r'(?i).*adjusted.*operating[\s-]*margin.*',
+        ],
+        'GAAP Operating Margins': [
+            r'(?i).*gaap.*operating[\s-]*margin.*',
+            r'(?i)^operating[\s-]*margin.*',
+        ],
+        'Gross Margins': [
+            r'(?i).*gross[\s-]*margin.*',
+        ],
+        
+        # OTHER METRICS
+        'Adj. EBITDA': [
+            r'(?i).*adjusted.*ebitda.*',
+            r'(?i).*adj.*ebitda.*',
+        ],
+        'Free Cash Flow': [
+            r'(?i).*free[\s-]*cash[\s-]*flow.*',
+            r'(?i).*fcf.*',
+        ],
+    }
+    
+    # Function to find the standardized metric name based on patterns
+    def find_standardized_metric(metric_name):
+        for standard_name, patterns in metric_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, metric_name):
+                    return standard_name
+        return metric_name  # Return original if no match
+    
+    # Apply standardization to the Metric column only
+    df['Metric'] = df['Metric'].apply(find_standardized_metric)
+    
+    return df
+
+def post_process_ranges(combined_df):
+    """
+    Direct manual post-processing to ensure proper handling of mixed-sign ranges.
+    This handles all types of metrics including margins and EPS.
+    """
+    # Look for specific problematic patterns where Low might be negative but High should be positive
+    if 'Value or range' not in combined_df.columns or 'Low' not in combined_df.columns or 'High' not in combined_df.columns:
+        return combined_df
+    
+    # Make a copy to avoid modifying the original
+    fixed_df = combined_df.copy()
+    
+    # Keep track if we found and fixed any issues
+    fixed_count = 0
+    
+    for idx, row in fixed_df.iterrows():
+        value_text = str(row['Value or range'])
+        
+        # Convert values to numeric for comparison
+        try:
+            # Get Low value
+            if isinstance(row['Low'], str):
+                low_val = float(re.sub(r'[^\d.-]', '', row['Low']))
+            else:
+                low_val = float(row['Low']) if row['Low'] is not None else 0
+                
+            # Get High value
+            if isinstance(row['High'], str):
+                high_val = float(re.sub(r'[^\d.-]', '', row['High']))
+            else:
+                high_val = float(row['High']) if row['High'] is not None else 0
+        except:
+            continue
+        
+        # Check if Low is negative and High is also negative (the issue we need to fix)
+        if low_val < 0 and high_val < 0:
+            # Check specifically for patterns of mixed signs:
+            # 1. Dollar ranges with parentheses for negative: "$(1) million to $1 million"
+            # 2. Percentage ranges with parentheses for negative: "(5%) to 2%"
+            # 3. EPS ranges with parentheses for negative: "$(0.05) to $0.10"
+            # 4. General numeric ranges with minus signs: "-1 to 1"
+            
+            # Patterns to check for all metric types
+            patterns = [
+                # Dollar ranges (with parentheses for negative)
+                r'\$\s*\(\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s+to\s+\$\s*\d+',
+                # Dollar ranges (with minus sign for negative)
+                r'-\s*\$\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s+to\s+\$\s*\d+',
+                # Percentage ranges (with parentheses for negative)
+                r'\(\s*\d+(?:\.\d+)?\s*\%\s*\)\s+to\s+\d+\s*\%',
+                # Percentage ranges (with minus sign for negative)
+                r'-\s*\d+(?:\.\d+)?\s*\%\s+to\s+\d+\s*\%',
+                # EPS ranges (with parentheses for negative)
+                r'\$\s*\(\s*\d+\.\d+\s*\)\s+to\s+\$\s*\d+\.\d+',
+                # EPS ranges (with minus sign for negative)
+                r'-\s*\$\s*\d+\.\d+\s+to\s+\$\s*\d+\.\d+',
+                # General numeric ranges (with parentheses for negative)
+                r'\(\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s+to\s+\d+',
+                # General numeric ranges (with minus sign for negative)
+                r'-\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s+to\s+\d+',
+            ]
+            
+            # Check each pattern
+            is_mixed_range = False
+            for pattern in patterns:
+                if re.search(pattern, value_text, re.IGNORECASE):
+                    is_mixed_range = True
+                    fixed_count += 1
+                    break
+            
+            # If we found a mixed range pattern, fix the High value to be positive
+            if is_mixed_range:
+                # Make the High value positive
+                if isinstance(row['High'], str):
+                    if '%' in row['High']:
+                        fixed_df.at[idx, 'High'] = f"{abs(high_val):.1f}%"
+                    elif '$' in row['High']:
+                        if abs(high_val) >= 100:
+                            fixed_df.at[idx, 'High'] = f"${abs(high_val):.0f}"
+                        elif abs(high_val) >= 10:
+                            fixed_df.at[idx, 'High'] = f"${abs(high_val):.1f}"
+                        else:
+                            fixed_df.at[idx, 'High'] = f"${abs(high_val):.2f}"
+                    else:
+                        fixed_df.at[idx, 'High'] = f"{abs(high_val)}"
+                else:
+                    fixed_df.at[idx, 'High'] = abs(high_val)
+    
+    # Log if we fixed any issues
+    if fixed_count > 0:
+        st.write(f"✅ Fixed {fixed_count} mixed-sign ranges in the data")
+    
+    return fixed_df
 
 def extract_guidance(text, ticker, client, model_name):
     """
@@ -984,53 +1123,86 @@ if st.button("🔍 Extract Guidance"):
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         if len(rows) > 1:  # Check if we have header and at least one row of data
-                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                            # First, standardize the column names
+                            column_names = [c.strip() for c in rows[0]]
                             
-                            # Store which rows have percentages or parenthetical values in the Value column
-                            percentage_rows = []
-                            parenthetical_rows = []
-                            for idx, row in df.iterrows():
-                                value_col = df.columns[1]  # Usually "Value"
-                                val_text = str(row[value_col])
-                                if '%' in val_text:
-                                    percentage_rows.append(idx)
-                                if '(' in val_text and ')' in val_text:
-                                    parenthetical_rows.append(idx)
+                            # Create DataFrame with original column names
+                            df = pd.DataFrame(rows[1:], columns=column_names)
                             
-                            # Parse low, high, and average from Value column
-                            value_col = df.columns[1]
-                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
+                            # Find the value column - it might be called "Value" or "Value or range"
+                            value_column = None
+                            for col in df.columns:
+                                if "value" in col.lower():
+                                    value_column = col
+                                    break
                             
-                            # Apply special corrections for parenthetical values
-                            for idx in parenthetical_rows:
-                                for col in ['Low', 'High', 'Average']:
-                                    if col in df.columns and not pd.isnull(df.loc[idx, col]):
-                                        val = df.loc[idx, col]
-                                        if isinstance(val, (int, float)) and val > 0:
-                                            df.at[idx, col] = -abs(val)
-                            
-                            # Apply comprehensive sign correction based on context
-                            df = correct_value_signs(df)
-                            
-                            # Apply GAAP/non-GAAP split
-                            df = split_gaap_non_gaap(df)
-                            
-                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                            for idx in percentage_rows:
-                                # Add % to Low, High, Average columns
-                                for col in ['Low', 'High', 'Average']:
-                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                        df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                            
-                            # Apply a final consistency check to fix any remaining issues with negative ranges
-                            df = check_range_consistency(df)
-                            
-                            # Add metadata columns
-                            df["FilingDate"] = date_str
-                            df["8K_Link"] = url
-                            df["Model_Used"] = selected_model
-                            results.append(df)
-                            st.success("✅ Guidance extracted from this 8-K.")
+                            # If no value column found, we have a problem
+                            if not value_column:
+                                st.warning("⚠️ No value column found in the extracted data.")
+                            else:
+                                # Save the original values for later
+                                original_values = df[value_column].copy()
+                                
+                                # Rename the value column to "Value" for consistent processing
+                                if value_column != "Value":
+                                    df.rename(columns={value_column: "Value"}, inplace=True)
+                                
+                                # Store which rows have percentages or parenthetical values in the Value column
+                                percentage_rows = []
+                                parenthetical_rows = []
+                                for idx, row in df.iterrows():
+                                    val_text = str(row.get('Value', ''))
+                                    if '%' in val_text:
+                                        percentage_rows.append(idx)
+                                    if '(' in val_text and ')' in val_text:
+                                        parenthetical_rows.append(idx)
+                                
+                                # Parse low, high, and average from Value column
+                                df[['Low','High','Average']] = df['Value'].apply(lambda v: pd.Series(parse_value_range(v)))
+                                
+                                # Apply special corrections for parenthetical values
+                                for idx in parenthetical_rows:
+                                    for col in ['Low', 'High', 'Average']:
+                                        if col in df.columns and not pd.isnull(df.loc[idx, col]):
+                                            val = df.loc[idx, col]
+                                            if isinstance(val, (int, float)) and val > 0:
+                                                df.at[idx, col] = -abs(val)
+                                
+                                # Apply comprehensive sign correction based on context
+                                df = correct_value_signs(df)
+                                
+                                # Apply GAAP/non-GAAP split
+                                df = split_gaap_non_gaap(df)
+                                
+                                # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                                for idx in percentage_rows:
+                                    # Add % to Low, High, Average columns
+                                    for col in ['Low', 'High', 'Average']:
+                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                            df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                                
+                                # We're using the simplified check_range_consistency function
+                                # that doesn't change any values
+                                df = check_range_consistency(df)
+                                
+                                # Apply the post-processing to fix mixed-sign ranges
+                                df = post_process_ranges(df)
+                                
+                                # Apply metric standardization (only changes the Metric column)
+                                df = standardize_metrics(df)
+                                
+                                # Now rename the "Value" column back to "Value or range" and restore original values
+                                if "Value" in df.columns:
+                                    df.rename(columns={"Value": "Value or range"}, inplace=True)
+                                    # Restore the original values
+                                    df["Value or range"] = original_values
+                                
+                                # Add metadata columns
+                                df["FilingDate"] = date_str
+                                df["8K_Link"] = url
+                                df["Model_Used"] = selected_model
+                                results.append(df)
+                                st.success("✅ Guidance extracted from this 8-K.")
                         else:
                             st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
                             
@@ -1038,45 +1210,4 @@ if st.button("🔍 Extract Guidance"):
                             st.write("Sample of text sent to OpenAI:")
                             sample_length = min(500, len(guidance_paragraphs))
                             st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                    else:
-                        st.warning(f"⚠️ No guidance table found in {url}")
-                        
-                        # Show a sample of the text to help debug
-                        st.write("Sample of text sent to OpenAI:")
-                        sample_length = min(500, len(guidance_paragraphs))
-                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                except Exception as e:
-                    st.warning(f"Could not process: {url}. Error: {str(e)}")
-
-            if results:
-                combined = pd.concat(results, ignore_index=True)
-                
-                # Preview the table
-                st.subheader("🔍 Preview of Extracted Guidance")
-                
-                # Select the most relevant columns for display
-                display_cols = ["Metric", "Value", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
-                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
-                
-                # Apply custom formatting when displaying
-                # Convert numeric columns to appropriate string formats
-                for col in ['Low', 'High', 'Average']:
-                    if col in display_df.columns:
-                        display_df[col] = display_df[col].apply(
-                            lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
-                                      any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
-                                      else format_dollar(x) if isinstance(x, (int, float)) and 
-                                      any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
-                                      else x)
-                        )
-                
-                # Display the table with formatting
-                st.dataframe(display_df, use_container_width=True)
-                
-                # Add download button
-                import io
-                excel_buffer = io.BytesIO()
-                combined.to_excel(excel_buffer, index=False)
-                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            else:
-                st.warning("No guidance data extracted.")
+                    else
