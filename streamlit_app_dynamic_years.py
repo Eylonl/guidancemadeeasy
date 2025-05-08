@@ -376,19 +376,40 @@ def check_range_consistency(df):
         # Get original value text for context
         original_value = str(row.get('Value', ''))
         
-        # Extract explicit negative indicators from the original value
+        # IMPORTANT FIX: More precise checks for negative indicators
+        
+        # Check for parenthetical notation with numbers (like "(5)" or "($0.05)")
         has_parenthetical_notation = '(' in original_value and ')' in original_value and re.search(r'\(\s*\$?\s*\d', original_value)
+        
+        # Check for minus sign directly before a number (like "-5" or "-$0.05")
         has_minus_sign = '-' in original_value and re.search(r'-\s*\$?\s*\d', original_value)
         
-        # Check if there's explicit negative language (not just generic "decrease" which could be positive)
-        has_negative_language = re.search(r'\b(?:loss|deficit|negative)\b', original_value, re.I)
+        # Check for explicit negative language about the RANGE (not just individual values)
+        has_negative_language = re.search(r'\b(?:loss|deficit|negative)\b.*(?:range|from|to)', original_value, re.I) or \
+                               re.search(r'(?:range|from|to).*\b(?:loss|deficit|negative)\b', original_value, re.I)
         
-        # 1. If low is negative and high is positive, but clear indicators that both should be negative
+        # NEW: Check for explicit range notation indicating both values should be negative
+        # This checks for patterns like "-1 to -2" or "(-1) to (-2)"
+        has_explicit_negative_range = re.search(r'(-\d+(?:\.\d+)?)\s*(?:to|[-–—])\s*(-\d+(?:\.\d+)?)', original_value) or \
+                                     re.search(r'\(\s*\d+(?:\.\d+)?\s*\)\s*(?:to|[-–—])\s*\(\s*\d+(?:\.\d+)?\s*\)', original_value)
+        
+        # NEW: Check for explicit range notation indicating mixed signs
+        # This checks for patterns like "-1 to 2" where the signs are explicitly different
+        has_explicit_mixed_range = re.search(r'(-\d+(?:\.\d+)?)\s*(?:to|[-–—])\s*(\d+(?:\.\d+)?)[^-]', original_value) or \
+                                  re.search(r'\(\s*\d+(?:\.\d+)?\s*\)\s*(?:to|[-–—])\s*\d+(?:\.\d+)?', original_value)
+        
+        # 1. If low is negative and high is positive, check if both should be negative
         if low_val < 0 and high_val > 0:
+            # NEW: Don't correct if we have explicit mixed sign range notation
+            if has_explicit_mixed_range:
+                continue
+                
+            # Only correct if we have clear evidence both should be negative
             should_both_be_negative = (
                 has_parenthetical_notation or 
-                has_minus_sign or 
-                has_negative_language
+                has_explicit_negative_range or
+                # Only use these indicators if they're very clear
+                (has_negative_language and (has_minus_sign or '(' in original_value))
             )
             
             if should_both_be_negative:
@@ -427,7 +448,6 @@ def check_range_consistency(df):
                         df.at[idx, 'Average'] = avg
     
     return df
-
 def split_gaap_non_gaap(df):
     if 'Value' not in df.columns or 'Metric' not in df.columns:
         return df  # Avoid crash if column names are missing
