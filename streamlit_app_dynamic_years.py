@@ -50,23 +50,16 @@ def fix_metrics_with_gpt(df, client, model_name):
     # Create a clearer prompt that explicitly addresses the EPS issue with attributions
     prompt = """Fix these financial metric names following these EXACT rules in order:
 
-1. CRITICAL: If a metric contains "per share" AND "net income", convert it IMMEDIATELY:
-   - "Non-GAAP Net Income per Share" (including any with "attributable to...") → "Non-GAAP EPS"
-   - "Adjusted Net Income per Share" (including any with "attributable to...") → "Non-GAAP EPS"
-   - "GAAP Net Income per Share" (including any with "attributable to...") → "GAAP EPS"
-   - Example: "Non-GAAP net income per share attributable to Blackline" MUST become "Non-GAAP EPS"
-   - Keep "Free Cash Flow per Share" as is
+1. EPS Metrics:
+   - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
+   - "Adjusted Net Income per Share" → "Non-GAAP EPS"
+   - "GAAP Net Income per Share" → "GAAP EPS"
 
-2. REMOVE ATTRIBUTIONS (for metrics not already handled by rule 1):
-   - Remove phrases like "attributable to [Company]" or "attributable to common stockholders"
-   - Example: "GAAP Net Income attributable to BlackLine" → "GAAP Net Income"
-   - Example: "Non-GAAP Operating Income attributable to BlackLine" → "Non-GAAP Operating Income"
-
-3. ADJUSTED METRICS:
+2. ADJUSTED METRICS:
    - Change "Adjusted" to "Non-GAAP" except for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
    - Example: "Adjusted Net Income" → "Non-GAAP Net Income"
 
-4. REVENUE METRICS:
+3. REVENUE METRICS:
    - Only standardize to "Revenue" if BOTH:
      a) The original metric contains "revenue" or "sales" AND
      b) The period_type is not blank
@@ -76,11 +69,6 @@ I'll give you a list of metrics with their period_type in this format: "Metric |
 For each item, respond with ONLY the fixed metric name following ALL rules above.
 
 """
-    
-    # Add metrics to the prompt with clear examples of problem cases
-    prompt += "Here are specific examples of the problem cases that MUST be fixed correctly:\n"
-    prompt += "- \"Non-GAAP net income per share attributable to Blackline\" MUST become \"Non-GAAP EPS\"\n"
-    prompt += "- \"GAAP Net income per share attributable to BlackLine, Inc.\" MUST become \"GAAP EPS\"\n\n"
     
     # Add the actual metrics to process
     for i, (metric, period_type) in enumerate(unique_metric_pairs):
