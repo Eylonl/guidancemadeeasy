@@ -36,63 +36,48 @@ def fix_metrics_with_gpt(df, client, model_name):
     if 'metric' not in df.columns or df.empty:
         return df
     
-    # Get unique metrics to reduce API calls
-    unique_metrics = df['metric'].unique().tolist()
+    # Create a list of metrics with their period_type to send to GPT
+    metric_list = []
+    for _, row in df.iterrows():
+        period_type = row.get('period_type', '') if 'period_type' in df.columns else ''
+        if pd.isna(period_type):
+            period_type = ''
+        metric_list.append((row['metric'], period_type))
+    
+    # Get unique metric-period_type pairs to reduce API calls
+    unique_metric_pairs = list(set(metric_list))
     
     # Create a clear prompt for GPT with simple standardization rules
-    prompt = """Fix these financial metric names by applying these rules in exact order:
+    prompt = """Fix these financial metric names following these simple rules:
 
-STEP 1: IDENTIFY CORE METRIC TYPE
-- First, determine if the metric is:
-  * A per share metric (contains "per share")
-  * A revenue metric (contains "revenue" or "sales")
-  * A net income metric (contains "net income")
-  * An EBITDA metric (contains "EBITDA")
-  * Another metric type
+1. PER SHARE METRICS:
+   - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
+   - "Adjusted Net Income per Share" → "Non-GAAP EPS"
+   - "GAAP Net Income per Share" → "GAAP EPS"
+   - Keep "Free Cash Flow per Share" as is
 
-STEP 2: REMOVE ATTRIBUTIONS
-- Remove ONLY the attribution phrase (not other parts of the metric name)
-- For example: "Non-GAAP Net Income per Share attributable to BlackRock" 
-  * KEEP: "Non-GAAP Net Income per Share" 
-  * REMOVE: "attributable to BlackRock"
-- Common attribution phrases to remove:
-  * "attributable to [Company Name]"
-  * "attributable to common stockholders"
+2. REVENUE METRICS:
+   - Only standardize to "Revenue" if BOTH:
+     a) The original metric contains "revenue" or "sales" AND
+     b) The period_type is not blank
+   - If period_type is blank, ALWAYS keep the original metric name
 
-STEP 3: STANDARDIZE METRIC NAMES
-- For earnings per share metrics:
-  * "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
-  * "Adjusted Net Income per Share" → "Non-GAAP EPS"
-  * "GAAP Net Income per Share" → "GAAP EPS"
-- For revenue/sales metrics (ONLY if it contains "revenue" or "sales"):
-  * "GAAP Revenue" → "Revenue"
-  * "Non-GAAP Revenue" → "Revenue"
-  * "Adjusted Revenue" → "Revenue"
-  * "Net Sales" → "Revenue"
-- For adjusted metrics:
-  * Replace "Adjusted" with "Non-GAAP" EXCEPT for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
-- DO NOT CHANGE "Free Cash Flow per Share" or other non-earnings per share metrics
-- DO NOT CHANGE any metric to "Revenue" unless it actually contains the word "revenue" or "sales"
+3. ADJUSTED METRICS:
+   - Change "Adjusted" to "Non-GAAP" except for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
+   - Example: "Adjusted Net Income" → "Non-GAAP Net Income"
 
-EXAMPLES OF COMPLETE TRANSFORMATIONS:
-- "Non-GAAP Net Income attributable to BlackLine" → "Non-GAAP Net Income"
-- "Non-GAAP Net Income per Share attributable to BlackLine" → "Non-GAAP EPS"
-- "Adjusted Net Income per Share attributable to common stockholders" → "Non-GAAP EPS"
-- "GAAP Revenue attributable to BlackRock" → "Revenue"
-- "Adjusted Revenue" → "Revenue"
-- "Free Cash Flow per Share attributable to Shareholders" → "Free Cash Flow per Share"
-- "Billings" → "Billings" (NOT "Revenue")
-- "ARR" → "ARR" (NOT "Revenue")
+4. REMOVE ATTRIBUTIONS:
+   - Remove phrases like "attributable to [Company]" or "attributable to common stockholders"
+   - Example: "GAAP Net Income attributable to BlackLine" → "GAAP Net Income"
 
-IMPORTANT: DO NOT change metrics like "ARR", "Billings", "Bookings", etc. to "Revenue" unless they explicitly contain the word "revenue" or "sales".
-
-For each metric below, respond with ONLY the fixed version after applying all steps above:
+I'll give you a list of metrics with their period_type in this format: "Metric | Period Type"
+For each item, respond with ONLY the fixed metric name. If period_type is blank, do NOT convert to "Revenue".
 
 """
     
     # Add metrics to the prompt
-    for i, metric in enumerate(unique_metrics):
-        prompt += f"{i+1}. {metric}\n"
+    for i, (metric, period_type) in enumerate(unique_metric_pairs):
+        prompt += f"{i+1}. {metric} | {period_type}\n"
         
     # Ask GPT to fix the metrics
     response = client.chat.completions.create(
@@ -115,30 +100,26 @@ For each metric below, respond with ONLY the fixed version after applying all st
                 line = parts[1].strip()
         processed_lines.append(line.strip())
     
-    # Match with original metrics - assuming GPT maintains the order
-    if len(processed_lines) == len(unique_metrics):
-        for original, fixed in zip(unique_metrics, processed_lines):
-            fixed_metrics[original] = fixed
+    # Match with original metric_pairs
+    if len(processed_lines) == len(unique_metric_pairs):
+        for (metric, period_type), fixed in zip(unique_metric_pairs, processed_lines):
+            fixed_metrics[(metric, period_type)] = fixed
     
-    # Additional safety check for blank period_type rows
-    processed_df = df.copy()
-    
-    # First apply the GPT fixes to all rows
-    for idx, row in processed_df.iterrows():
-        original_metric = row['metric']
-        fixed_metric = fixed_metrics.get(original_metric, original_metric)
+    # Apply fixes to the dataframe
+    result_df = df.copy()
+    for idx, row in result_df.iterrows():
+        period_type = row.get('period_type', '') if 'period_type' in df.columns else ''
+        if pd.isna(period_type):
+            period_type = ''
         
-        # Override to keep original metric if:
-        # 1. The fixed metric is "Revenue" AND
-        # 2. The period_type is blank
-        if (fixed_metric == 'Revenue' and 
-            'period_type' in processed_df.columns and 
-            (pd.isna(row['period_type']) or str(row['period_type']).strip() == '')):
-            processed_df.at[idx, 'metric'] = original_metric
-        else:
-            processed_df.at[idx, 'metric'] = fixed_metric
+        metric = row['metric']
+        key = (metric, period_type)
+        
+        # Apply the fixed metric from GPT's response
+        if key in fixed_metrics:
+            result_df.at[idx, 'metric'] = fixed_metrics[key]
     
-    return processed_df
+    return result_df
     
 def extract_guidance(text, ticker, client, model_name):
     """
