@@ -1189,14 +1189,16 @@ if st.button("🔍 Extract Guidance"):
                                       any('%' in str(row.get('Value or range', '')) for _, row in display_df.iterrows()) 
                                       else format_dollar(x) if isinstance(x, (int, float)) and 
                                       any('$' in str(row.get('Value or range', '')) for _, row in display_df.iterrows())
-
+                                      else x)
+                        )
+                
                 # Display the table with formatting
-               st.dataframe(display_df, use_container_width=True)
-               
-               # Add download button
-               import io
-               excel_buffer = io.BytesIO()
-               combined.to_excel(excel_buffer, index=False)
-               st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-           else:
-               st.warning("No guidance data extracted.")
+                st.dataframe(display_df, use_container_width=True)
+                
+                # Add download button
+                import io
+                excel_buffer = io.BytesIO()
+                combined.to_excel(excel_buffer, index=False)
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("No guidance data extracted.")
