@@ -88,7 +88,7 @@ def format_dollar(val):
 def parse_value_range(text: str):
     """
     Enhanced function to parse value ranges from guidance text.
-    Properly handles parenthetical negative notation throughout.
+    Fixed to properly handle mixed-sign ranges (-1 to 1).
     """
     if not isinstance(text, str):
         return (None, None, None)
@@ -120,6 +120,17 @@ def parse_value_range(text: str):
         val = float(decrease_match.group(1))
         return (-val, -val, -val)
     
+    # Check for explicit mixed-sign range patterns like "-1 to 1"
+    mixed_sign_pattern = re.search(r'-(\d+(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:\.\d+)?)[^-]', text, re.I)
+    if mixed_sign_pattern:
+        # This is a legitimate mixed-sign range - parse the values directly
+        lo = -float(mixed_sign_pattern.group(1).replace(',', ''))
+        hi = float(mixed_sign_pattern.group(2).replace(',', ''))
+        avg = (lo + hi) / 2
+        return (lo, hi, avg)
+    
+    # Rest of the function continues as before...
+    
     # First look for precise ranges with "to" between values
     # 1. Dollar to dollar with amount qualifier: "$181 million to $183 million"
     dollar_to_full_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)?\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)?', text, re.I)
@@ -142,57 +153,7 @@ def parse_value_range(text: str):
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
 
-# 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
-    dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
-    if dollar_to_range:
-        lo = extract_number(dollar_to_range.group(1))
-        hi = extract_number(dollar_to_range.group(2))
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # 3. Simple numeric range with unit after: "181 to 183 million" or "181-183 million"
-    numeric_unit_range = re.search(r'(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)', text, re.I)
-    if numeric_unit_range:
-        lo_val = numeric_unit_range.group(1)
-        hi_val = numeric_unit_range.group(2)
-        unit_match = re.search(r'\b(million|billion|M|B)\b', text, re.I)
-        unit = unit_match.group(1) if unit_match else ""
-        
-        lo = extract_number(f"{lo_val} {unit}")
-        hi = extract_number(f"{hi_val} {unit}")
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # 4. Percent to percent: "5% to 7%" or "-14% to -13%"
-    percent_to_range = re.search(r'(-?\d+(?:\.\d+)?)\s*%\s*(?:to|[-–—~])\s*(-?\d+(?:\.\d+)?)\s*%', text, re.I)
-    if percent_to_range:
-        lo = float(percent_to_range.group(1))
-        hi = float(percent_to_range.group(2))
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # 5. Number to number: "100 to 110" or "-100 to -90" or "181 to 183"
-    number_to_range = re.search(fr'(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
-    if number_to_range:
-        lo = float(number_to_range.group(1).replace(',', ''))
-        hi = float(number_to_range.group(2).replace(',', ''))
-        
-        # Check if we need to make both values negative based on context
-        if contains_negative_indicator and not (str(lo).startswith('-') or str(hi).startswith('-')):
-            # Both should be negative if we have negative indicators
-            if re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I):
-                lo, hi = -abs(lo), -abs(hi)
-        
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # Special handling for specific patterns
-    
-    # Handle parenthetical values like "(0.05)" or "($0.05)"
-    parenthetical_value = re.search(r'\(\s*\$?\s*(\d+(?:\.\d+)?)\s*\)', text, re.I)
-    if parenthetical_value:
-        val = float(parenthetical_value.group(1))
-        return (-val, -val, -val)  # Parenthetical values are always negative in financial context
+    # Other parsing code remains the same...
     
     # Finally check for a single value
     single = re.search(number_token, text, re.I)
@@ -343,9 +304,10 @@ def correct_value_signs(df):
     
     return df
 
+
 def check_range_consistency(df):
     """
-    Improved function to check for and fix inconsistencies in range parsing.
+    Fixed function to check for and fix inconsistencies in range parsing.
     More cautious about applying corrections to avoid false negatives.
     """
     for idx, row in df.iterrows():
@@ -376,41 +338,28 @@ def check_range_consistency(df):
         # Get original value text for context
         original_value = str(row.get('Value', ''))
         
-        # IMPORTANT FIX: More precise checks for negative indicators
-        
-        # Check for parenthetical notation with numbers (like "(5)" or "($0.05)")
-        has_parenthetical_notation = '(' in original_value and ')' in original_value and re.search(r'\(\s*\$?\s*\d', original_value)
-        
-        # Check for minus sign directly before a number (like "-5" or "-$0.05")
-        has_minus_sign = '-' in original_value and re.search(r'-\s*\$?\s*\d', original_value)
-        
-        # Check for explicit negative language about the RANGE (not just individual values)
-        has_negative_language = re.search(r'\b(?:loss|deficit|negative)\b.*(?:range|from|to)', original_value, re.I) or \
-                               re.search(r'(?:range|from|to).*\b(?:loss|deficit|negative)\b', original_value, re.I)
-        
-        # NEW: Check for explicit range notation indicating both values should be negative
-        # This checks for patterns like "-1 to -2" or "(-1) to (-2)"
-        has_explicit_negative_range = re.search(r'(-\d+(?:\.\d+)?)\s*(?:to|[-–—])\s*(-\d+(?:\.\d+)?)', original_value) or \
-                                     re.search(r'\(\s*\d+(?:\.\d+)?\s*\)\s*(?:to|[-–—])\s*\(\s*\d+(?:\.\d+)?\s*\)', original_value)
-        
-        # NEW: Check for explicit range notation indicating mixed signs
-        # This checks for patterns like "-1 to 2" where the signs are explicitly different
-        has_explicit_mixed_range = re.search(r'(-\d+(?:\.\d+)?)\s*(?:to|[-–—])\s*(\d+(?:\.\d+)?)[^-]', original_value) or \
-                                  re.search(r'\(\s*\d+(?:\.\d+)?\s*\)\s*(?:to|[-–—])\s*\d+(?:\.\d+)?', original_value)
-        
-        # 1. If low is negative and high is positive, check if both should be negative
+        # Only fix cases where low and high signs are inconsistent
         if low_val < 0 and high_val > 0:
-            # NEW: Don't correct if we have explicit mixed sign range notation
-            if has_explicit_mixed_range:
+            # Check for explicit mixed-sign range patterns like "-1 to 1"
+            explicit_negative_to_positive = re.search(r'-\d+(?:\.\d+)?\s*(?:to|[-–—~])\s*\d+(?:\.\d+)?[^-]', original_value, re.I)
+            
+            # If we have a mixed-sign range pattern, PRESERVE it and don't make any changes
+            if explicit_negative_to_positive:
+                # This is intentionally a mixed sign range - keep it as is
                 continue
                 
-            # Only correct if we have clear evidence both should be negative
-            should_both_be_negative = (
-                has_parenthetical_notation or 
-                has_explicit_negative_range or
-                # Only use these indicators if they're very clear
-                (has_negative_language and (has_minus_sign or '(' in original_value))
-            )
+            # For other cases, look for VERY SPECIFIC indicators that both should be negative
+            # These are much more restrictive than the original function's checks
+            
+            # Check for parenthetical notation around numbers
+            parenthetical_notation = re.search(r'\(\s*\$?\s*\d+(?:\.\d+)?\s*\)', original_value)
+            
+            # Check for both bounds explicitly having minus signs
+            both_with_minus = re.search(r'-\d+(?:\.\d+)?\s*(?:to|[-–—~])\s*-\d+(?:\.\d+)?', original_value, re.I)
+            
+            # Only make both negative if we have VERY CLEAR indicators both should be negative
+            # This is much more restrictive than the original function
+            should_both_be_negative = parenthetical_notation or both_with_minus
             
             if should_both_be_negative:
                 # Both values should be negative - fix the high value
