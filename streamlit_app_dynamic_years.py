@@ -47,31 +47,41 @@ def fix_metrics_with_gpt(df, client, model_name):
     # Get unique metric-period_type pairs to reduce API calls
     unique_metric_pairs = list(set(metric_list))
     
-    # Create a clear prompt for GPT with simple standardization rules
-    prompt = """Fix these financial metric names following these simple rules:
+    # Create a clearer, more structured prompt for GPT
+    prompt = """Fix these financial metric names following these precise standardization rules:
 
-1. PER SHARE METRICS:
-   - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
-   - "Adjusted Net Income per Share" → "Non-GAAP EPS"
-   - "GAAP Net Income per Share" → "GAAP EPS"
-   - Keep "Free Cash Flow per Share" as is
+RULES TO APPLY IN THIS EXACT ORDER:
 
-2. REVENUE METRICS:
+1. REMOVE ATTRIBUTIONS:
+   - Remove any phrases like "attributable to [Company]" or "attributable to common stockholders"
+   - Example: "GAAP Net Income attributable to BlackLine" → "GAAP Net Income"
+   - Example: "Non-GAAP net income per share attributable to Blackline" → "Non-GAAP net income per share"
+
+2. PER SHARE METRICS:
+   - ANY metric containing BOTH "net income" AND "per share" (in any capitalization) should be standardized:
+     * If it contains "Non-GAAP" or "Adjusted" → change to "Non-GAAP EPS"
+     * If it contains "GAAP" → change to "GAAP EPS"
+   - Examples:
+     * "Non-GAAP net income per share" → "Non-GAAP EPS"
+     * "Adjusted Net Income per Share" → "Non-GAAP EPS" 
+     * "GAAP Net Income per Share" → "GAAP EPS"
+     * "Non-GAAP Net Income per Share attributable to BlackLine" → "Non-GAAP EPS"
+   - Exception: Keep "Free Cash Flow per Share" unchanged
+
+3. ADJUSTED METRICS:
+   - Change "Adjusted" to "Non-GAAP" EXCEPT for:
+     * "Adjusted EBITDA" (keep as is)
+     * "Adjusted EBITDA Margin" (keep as is)
+   - Example: "Adjusted Net Income" → "Non-GAAP Net Income"
+
+4. REVENUE METRICS:
    - Only standardize to "Revenue" if BOTH:
      a) The original metric contains "revenue" or "sales" AND
      b) The period_type is not blank
    - If period_type is blank, ALWAYS keep the original metric name
 
-3. ADJUSTED METRICS:
-   - Change "Adjusted" to "Non-GAAP" except for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
-   - Example: "Adjusted Net Income" → "Non-GAAP Net Income"
-
-4. REMOVE ATTRIBUTIONS:
-   - Remove phrases like "attributable to [Company]" or "attributable to common stockholders"
-   - Example: "GAAP Net Income attributable to BlackLine" → "GAAP Net Income"
-
 I'll give you a list of metrics with their period_type in this format: "Metric | Period Type"
-For each item, respond with ONLY the fixed metric name. If period_type is blank, do NOT convert to "Revenue".
+For each item, respond with ONLY the fixed metric name following ALL the rules above.
 
 """
     
