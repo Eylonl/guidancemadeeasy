@@ -31,7 +31,7 @@ def format_dollar(val):
 
 def fix_metrics_with_gpt(df, client, model_name):
     """
-    Use GPT to directly fix metric names with straightforward standardization rules.
+    Use GPT to directly fix metric names with clear, simple standardization rules.
     """
     if 'metric' not in df.columns or df.empty:
         return df
@@ -40,32 +40,48 @@ def fix_metrics_with_gpt(df, client, model_name):
     unique_metrics = df['metric'].unique().tolist()
     
     # Create a clear prompt for GPT with simple standardization rules
-    prompt = """Fix these financial metric names following these exact rules:
+    prompt = """Fix these financial metric names following these rules.
 
-1. Use proper capitalization for acronyms: "Non-GAAP", "GAAP", "EPS", "EBITDA", etc.
+KEY RULES:
+1. Always use proper capitalization for acronyms: "Non-GAAP", "GAAP", "EPS", "EBITDA", etc.
 
-2. FOR PER SHARE METRICS:
-   - ANY metric that includes "per share" or is about earnings per share should be categorized as EPS
+2. REMOVE ATTRIBUTIONS:
+   - Remove any phrases like "attributable to [Company Name]" or "attributable to common stockholders"
+   - Examples:
+     - "Non-GAAP Net Income per Share attributable to BlackLine" → "Non-GAAP EPS"
+     - "GAAP Net Income attributable to Microsoft" → "GAAP Net Income"
+
+3. REVENUE METRICS:
+   - ALL revenue metrics should be standardized to just "Revenue"
+   - This includes "GAAP Revenue", "Non-GAAP Revenue", "Adjusted Revenue", etc.
+   - ALL become simply "Revenue"
+
+4. PER SHARE METRICS:
+   - ANY metric with "Net Income per Share" or similar earnings per share phrasing becomes an EPS-type metric
    - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
    - "Adjusted Net Income per Share" → "Non-GAAP EPS"
    - "GAAP Net Income per Share" → "GAAP EPS"
-   - "Earnings per Share" → "Diluted EPS" (if not specified as GAAP or Non-GAAP)
+   - DO NOT CHANGE "Free Cash Flow per Share" - keep it as is
+   - DO NOT CHANGE other per share metrics that aren't earnings metrics
 
-3. FOR ADJUSTED METRICS:
-   - Replace "Adjusted" with "Non-GAAP" for all metrics EXCEPT Adjusted EBITDA
-   - "Adjusted Net Income" → "Non-GAAP Net Income"
-   - "Adjusted Operating Income" → "Non-GAAP Operating Income"
-   - "Adjusted Revenue" → "Non-GAAP Revenue"
-   - BUT KEEP: "Adjusted EBITDA" and "Adjusted EBITDA Margin" as is
+5. ADJUSTED METRICS:
+   - Replace "Adjusted" with "Non-GAAP" for all metrics EXCEPT:
+     - Keep "Adjusted EBITDA" as is
+     - Keep "Adjusted EBITDA Margin" as is
+   - Examples:
+     - "Adjusted Net Income" → "Non-GAAP Net Income"
+     - "Adjusted Operating Income" → "Non-GAAP Operating Income"
 
-4. IMPORTANT: If a metric contains "per share" or "EPS" in any form, it MUST be classified as some form of EPS, not as Net Income
+CRITICAL INSTRUCTION: If a metric has "Net Income per Share" or similar earnings per share phrasing, it MUST be classified as "EPS" not as "Net Income".
 
-For each metric below, respond with the fixed version:
+For each metric below, respond in the exact format:
+- Original: Fixed version
+
 """
     
     # Add metrics to the prompt
     for metric in unique_metrics:
-        prompt += f"- {metric}\n"
+        prompt += f"{metric}\n"
         
     # Ask GPT to fix the metrics
     response = client.chat.completions.create(
@@ -79,8 +95,22 @@ For each metric below, respond with the fixed version:
     lines = response.choices[0].message.content.strip().split('\n')
     
     for line in lines:
-        if '-' in line and ':' in line:
+        # Look for various formats of responses
+        if ':' in line:
+            # Handle format like "Original: Fixed"
             parts = line.split(':', 1)
+            original = parts[0].strip().replace('- ', '')
+            fixed = parts[1].strip()
+            fixed_metrics[original] = fixed
+        elif '→' in line:
+            # Handle format like "Original → Fixed"
+            parts = line.split('→', 1)
+            original = parts[0].strip().replace('- ', '')
+            fixed = parts[1].strip()
+            fixed_metrics[original] = fixed
+        elif '->' in line:
+            # Handle format like "Original -> Fixed"
+            parts = line.split('->', 1)
             original = parts[0].strip().replace('- ', '')
             fixed = parts[1].strip()
             fixed_metrics[original] = fixed
