@@ -1071,10 +1071,6 @@ if st.button("🔍 Extract Guidance"):
                         if len(rows) > 1:  # Check if we have header and at least one row of data
                             df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                             
-                            # Debug: Print original dataframe 
-                            st.write("Original table from OpenAI:")
-                            st.write(df)
-                            
                             # Save the original Value column to restore later
                             original_values = df['Value'].copy() if 'Value' in df.columns else None
                             
@@ -1123,10 +1119,6 @@ if st.button("🔍 Extract Guidance"):
                             # Restore the original Value column
                             if original_values is not None:
                                 df['Value'] = original_values
-                                
-                            # Debug: Print after processing
-                            st.write("After processing:")
-                            st.write(df)
                             
                             # Add metadata columns
                             df["FilingDate"] = date_str
