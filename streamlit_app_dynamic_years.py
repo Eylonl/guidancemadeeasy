@@ -29,90 +29,60 @@ def format_dollar(val):
             return f"${val:.2f}"
     return val
 
-def standardize_metrics(df):
+def fix_metrics_with_gpt(df, client, model_name):
     """
-    Standardize metric names to follow consistent financial reporting conventions.
+    Use GPT to directly fix metric names.
     """
     if 'metric' not in df.columns or df.empty:
         return df
     
-    # Create a deep copy to avoid modifying the original
-    df = df.copy()
+    # Get unique metrics to reduce API calls
+    unique_metrics = df['metric'].unique().tolist()
     
-    # First remove any parenthetical phrases like "(loss)" or "(income)"
-    df['metric'] = df['metric'].str.replace(r'\s*\([^)]*\)\s*', ' ', regex=True)
+    # Create a simple prompt for GPT
+    prompt = """Fix these financial metric names:
+1. Always use "Non-GAAP" not "Non-gaap"
+2. Use "Non-GAAP EPS" not "Non-gaap Net EPS"
+3. Remove parenthetical phrases like "(loss)" or "(income)"
+4. Ensure proper capitalization (GAAP, EPS, EBITDA, etc.)
+
+Here are the metrics to fix:
+"""
     
-    # Ensure proper capitalization of GAAP acronyms first
-    df['metric'] = df['metric'].str.replace('gaap', 'GAAP', case=False)
-    df['metric'] = df['metric'].str.replace('non-gaap', 'Non-GAAP', case=False)
-    df['metric'] = df['metric'].str.replace('non gaap', 'Non-GAAP', case=False)
-    df['metric'] = df['metric'].str.replace('eps', 'EPS', case=False)
-    df['metric'] = df['metric'].str.replace('ebitda', 'EBITDA', case=False)
-    
-    # Capitalize important words 
-    def capitalize_metric(metric):
-        # Skip capitalization if already done
-        if 'GAAP' in metric or 'EPS' in metric or 'EBITDA' in metric:
-            return metric
-            
-        # Capitalize first letter of each word
-        words = metric.split()
-        capitalized = []
-        for word in words:
-            # Don't change already capitalized words or prepositions/articles
-            if word.upper() == word or word.lower() in ['of', 'the', 'and', 'or', 'in', 'on', 'at', 'for', 'to']:
-                capitalized.append(word)
-            else:
-                capitalized.append(word.capitalize())
-                
-        return ' '.join(capitalized)
-    
-    df['metric'] = df['metric'].apply(capitalize_metric)
-    
-    # Ensure consistent naming for common metrics
-    replacements = {
-        # EPS-specific fixes
-        'Non-GAAP Net EPS': 'Non-GAAP EPS',
-        'GAAP Net EPS': 'GAAP EPS',
+    # Add metrics to the prompt
+    for metric in unique_metrics:
+        prompt += f"- {metric}\n"
         
-        # Specific case you mentioned
-        'Non-GAAP Operating (loss) Income': 'Non-GAAP Operating Income',
-        'Non-GAAP Operating Loss Income': 'Non-GAAP Operating Income',
-        'Non-GAAP Operating Loss': 'Non-GAAP Operating Income',
-        
-        # Other variations with loss/income
-        'GAAP Operating Loss': 'GAAP Operating Income',
-        'GAAP Operating (loss) Income': 'GAAP Operating Income',
-        'Non-GAAP Net Loss': 'Non-GAAP Net Income',
-        'Non-GAAP Net (loss) Income': 'Non-GAAP Net Income',
-        'GAAP Net Loss': 'GAAP Net Income',
-        'GAAP Net (loss) Income': 'GAAP Net Income',
-        
-        # EPS standardization
-        'Loss Per Share': 'EPS',
-        'Income Per Share': 'EPS',
-        'Earnings Per Share': 'EPS',
-        'Non-GAAP Loss Per Share': 'Non-GAAP EPS',
-        'GAAP Loss Per Share': 'GAAP EPS',
-        
-        # Other terminology standardization
-        'Operating Profit': 'Operating Income',
-        'Net Profit': 'Net Income',
-        'Diluted Loss Per Share': 'Diluted EPS',
-        'Diluted Earnings Per Share': 'Diluted EPS',
-        
-        # Margins standardization
-        'Operating Margin Loss': 'Operating Margin',
-        'GAAP Operating Margin Loss': 'GAAP Operating Margin',
-        'Non-GAAP Operating Margin Loss': 'Non-GAAP Operating Margin',
-    }
+    # Ask GPT to fix the metrics
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+    )
     
-    # Apply all replacements (case-insensitive)
-    for old, new in replacements.items():
-        df['metric'] = df['metric'].str.replace(old, new, case=False, regex=False)
+    # Parse the response
+    fixed_metrics = {}
+    lines = response.choices[0].message.content.strip().split('\n')
     
-    # Clean up any double spaces
-    df['metric'] = df['metric'].str.replace(r'\s+', ' ', regex=True).str.strip()
+    for line in lines:
+        if '-' in line and ':' in line:
+            parts = line.split(':', 1)
+            original = parts[0].strip().replace('- ', '')
+            fixed = parts[1].strip()
+            fixed_metrics[original] = fixed
+    
+    # For any metrics not properly parsed, try a fallback approach
+    for metric in unique_metrics:
+        if metric not in fixed_metrics:
+            # Basic fixes
+            fixed = metric.replace('(loss)', '').replace('(income)', '')
+            fixed = fixed.replace('gaap', 'GAAP')
+            fixed = fixed.replace('Non-GAAP', 'Non-GAAP')  # Fix potential double replacement
+            fixed = fixed.replace('eps', 'EPS')
+            fixed_metrics[metric] = fixed.strip()
+    
+    # Apply fixes to the dataframe
+    df['metric'] = df['metric'].apply(lambda x: fixed_metrics.get(x, x))
     
     return df
 
@@ -685,8 +655,8 @@ if st.button("🔍 Extract Guidance"):
                                 if 'Value or range' in df.columns:
                                     df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
                             
-                            # Use the standardize_metrics function (no longer using GPT for this)
-                            df = standardize_metrics(df)
+                            # Use GPT to fix metric names
+                            df = fix_metrics_with_gpt(df, client, model_id)
                             
                             # Add metadata columns
                             df["filing_date"] = date_str
