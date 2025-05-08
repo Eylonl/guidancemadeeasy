@@ -1157,15 +1157,6 @@ if results:
         "8K_Link", "Model_Used"
     ]
     
-    # Create a list with primary columns first, then any other columns that might exist
-    all_columns = primary_columns + [col for col in combined.columns if col not in primary_columns]
-    
-    # Filter to only include columns that actually exist in the DataFrame
-    final_columns = [col for col in all_columns if col in combined.columns]
-    
-    # Reorder columns without removing any
-    combined = combined[final_columns]
-    
     # Preview the table
     st.subheader("🔍 Preview of Extracted Guidance")
     
