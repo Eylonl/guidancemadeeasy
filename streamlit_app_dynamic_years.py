@@ -42,28 +42,24 @@ def standardize_metrics(df):
     # First remove any parenthetical phrases like "(loss)" or "(income)"
     df['metric'] = df['metric'].str.replace(r'\s*\([^)]*\)\s*', ' ', regex=True)
     
-    # Capitalize important words and standardize terms
+    # Ensure proper capitalization of GAAP acronyms first
+    df['metric'] = df['metric'].str.replace('gaap', 'GAAP', case=False)
+    df['metric'] = df['metric'].str.replace('non-gaap', 'Non-GAAP', case=False)
+    df['metric'] = df['metric'].str.replace('non gaap', 'Non-GAAP', case=False)
+    df['metric'] = df['metric'].str.replace('eps', 'EPS', case=False)
+    df['metric'] = df['metric'].str.replace('ebitda', 'EBITDA', case=False)
+    
+    # Capitalize important words 
     def capitalize_metric(metric):
-        # Handle special cases
-        if 'gaap' in metric.lower():
-            metric = metric.replace('gaap', 'GAAP')
-            metric = metric.replace('GAAP', 'GAAP')  # Fix any double capitalization
-            
-        if 'non-gaap' in metric.lower():
-            metric = metric.replace('non-gaap', 'Non-GAAP')
-            metric = metric.replace('Non-GAAP', 'Non-GAAP')  # Fix any double capitalization
-            
-        if 'eps' in metric.lower():
-            metric = metric.replace('eps', 'EPS')
-            
-        if 'ebitda' in metric.lower():
-            metric = metric.replace('ebitda', 'EBITDA')
+        # Skip capitalization if already done
+        if 'GAAP' in metric or 'EPS' in metric or 'EBITDA' in metric:
+            return metric
             
         # Capitalize first letter of each word
         words = metric.split()
         capitalized = []
         for word in words:
-            # Don't change already capitalized words like GAAP, EPS, etc.
+            # Don't change already capitalized words or prepositions/articles
             if word.upper() == word or word.lower() in ['of', 'the', 'and', 'or', 'in', 'on', 'at', 'for', 'to']:
                 capitalized.append(word)
             else:
@@ -75,6 +71,10 @@ def standardize_metrics(df):
     
     # Ensure consistent naming for common metrics
     replacements = {
+        # EPS-specific fixes
+        'Non-GAAP Net EPS': 'Non-GAAP EPS',
+        'GAAP Net EPS': 'GAAP EPS',
+        
         # Specific case you mentioned
         'Non-GAAP Operating (loss) Income': 'Non-GAAP Operating Income',
         'Non-GAAP Operating Loss Income': 'Non-GAAP Operating Income',
