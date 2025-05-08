@@ -29,115 +29,6 @@ def format_dollar(val):
             return f"${val:.2f}"
     return val
 
-def split_gaap_non_gaap(df):
-    """Split rows that contain both GAAP and non-GAAP guidance into separate rows"""
-    if 'Value or range' not in df.columns or 'Metric' not in df.columns:
-        return df  # Avoid crash if column names are missing
-
-    rows = []
-    for _, row in df.iterrows():
-        val = str(row['Value or range'])
-        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
-        if match:
-            gaap_val = match.group(1).strip() + " GAAP"
-            non_gaap_val = match.group(2).strip() + " non-GAAP"
-            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
-                new_row = row.copy()
-                new_row["Value or range"] = new_val
-                new_row["Metric"] = f"{row['Metric']} ({label})"
-                rows.append(new_row)
-        else:
-            rows.append(row)
-    return pd.DataFrame(rows)
-
-def standardize_metrics(df):
-    """
-    Standardize metric names to consistent format.
-    Maps various financial metric variations to standard labels.
-    """
-    if 'Metric' not in df.columns:
-        return df  # Return unchanged if no Metric column
-    
-    # Create a deep copy to avoid modifying the original DataFrame
-    df = df.copy()
-    
-    # Create a dictionary to map patterns to standardized metric names
-    metric_patterns = {
-        # EPS PATTERNS
-        'Non-GAAP EPS': [
-            r'(?i).*non[\s-]*gaap.*(?:eps|earnings per share|per share|income per share).*',
-            r'(?i).*adjusted.*(?:eps|earnings per share|per share|income per share).*',
-        ],
-        'GAAP EPS': [
-            r'(?i).*gaap.*(?:eps|earnings per share|per share|income per share).*',
-            r'(?i)^(?:eps|earnings per share|per share|income per share).*',
-            r'(?i).*net income per share.*',
-            r'(?i).*diluted (?:eps|earnings per share).*',
-        ],
-        
-        # REVENUE PATTERNS
-        'Revenue': [
-            r'(?i).*revenue.*',
-            r'(?i).*sales.*',
-        ],
-        
-        # OPERATING INCOME PATTERNS
-        'Non-GAAP Operating Income': [
-            r'(?i).*non[\s-]*gaap.*operating[\s-]*(?:income|profit).*',
-            r'(?i).*adjusted.*operating[\s-]*(?:income|profit).*',
-        ],
-        'GAAP Operating Income': [
-            r'(?i).*operating[\s-]*(?:income|profit).*',
-            r'(?i).*income[\s-]*from[\s-]*operations.*',
-        ],
-        
-        # NET INCOME PATTERNS
-        'Non-GAAP Net Income': [
-            r'(?i).*non[\s-]*gaap.*net[\s-]*(?:income|profit|earnings).*',
-            r'(?i).*adjusted.*net[\s-]*(?:income|profit|earnings).*',
-        ],
-        'GAAP Net Income': [
-            r'(?i).*gaap.*net[\s-]*(?:income|profit|earnings).*',
-            r'(?i)^(?:net[\s-]*income|net[\s-]*profit|net[\s-]*earnings).*',
-        ],
-        
-        # MARGIN PATTERNS
-        'Non-GAAP Operating Margins': [
-            r'(?i).*non[\s-]*gaap.*operating[\s-]*margin.*',
-            r'(?i).*adjusted.*operating[\s-]*margin.*',
-        ],
-        'GAAP Operating Margins': [
-            r'(?i).*gaap.*operating[\s-]*margin.*',
-            r'(?i)^operating[\s-]*margin.*',
-        ],
-        'Gross Margins': [
-            r'(?i).*gross[\s-]*margin.*',
-        ],
-        
-        # OTHER METRICS
-        'Adj. EBITDA': [
-            r'(?i).*adjusted.*ebitda.*',
-            r'(?i).*adj.*ebitda.*',
-        ],
-        'Free Cash Flow': [
-            r'(?i).*free[\s-]*cash[\s-]*flow.*',
-            r'(?i).*fcf.*',
-        ],
-    }
-    
-    # Function to find the standardized metric name based on patterns
-    def find_standardized_metric(metric_name):
-        for standard_name, patterns in metric_patterns.items():
-            for pattern in patterns:
-                if re.search(pattern, metric_name):
-                    return standard_name
-        return metric_name  # Return original if no match
-    
-    # Apply standardization to the Metric column only
-    df['Metric'] = df['Metric'].apply(find_standardized_metric)
-    
-    return df
-
 def extract_guidance(text, ticker, client, model_name):
     """
     Enhanced function to extract guidance from SEC filings.
@@ -193,6 +84,133 @@ Respond in table format without commentary.\n\n{text}"""
     except Exception as e:
         st.warning(f"⚠️ Error extracting guidance: {str(e)}")
         return None
+
+def standardize_metrics_with_gpt(df, client, model_name):
+    """
+    Use GPT to standardize metric names according to financial reporting conventions.
+    """
+    if 'metric' not in df.columns or df.empty:
+        return df
+    
+    # Create a list of unique metrics for GPT to standardize
+    unique_metrics = df['metric'].unique().tolist()
+    
+    prompt = """You are a financial reporting standards expert. Standardize the following financial metric names according to proper GAAP and non-GAAP naming conventions. 
+
+For each metric:
+1. Remove any parenthetical phrases like "(loss)" or "(income)"
+2. Use proper capitalization (e.g., "GAAP", "Non-GAAP", "EPS", "EBITDA")
+3. Standardize terminology (e.g., "Operating Income" not "Operating Profit")
+4. Ensure consistency (e.g., "GAAP Net Income" not "Net Income GAAP")
+
+Follow these specific standards:
+- Revenue metrics: "Revenue", "Organic Revenue", etc.
+- Income metrics: "GAAP Operating Income", "Non-GAAP Operating Income", "GAAP Net Income", "Non-GAAP Net Income"
+- Margin metrics: "Gross Margin", "GAAP Operating Margin", "Non-GAAP Operating Margin"
+- EPS metrics: "GAAP EPS", "Non-GAAP EPS", "Diluted EPS"
+- Other common metrics: "Adj. EBITDA", "Free Cash Flow", etc.
+
+Here are the metrics to standardize. For each one, respond with the standardized version:
+
+"""
+    
+    # Create a list of metrics for GPT to standardize
+    metrics_list = "\n".join([f"- {metric}" for metric in unique_metrics])
+    full_prompt = prompt + metrics_list
+    
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0.3,
+        )
+        
+        # Parse the response to get standardized metric names
+        standardized_metrics = {}
+        response_lines = response.choices[0].message.content.strip().split('\n')
+        
+        for line in response_lines:
+            if '-' in line and ':' in line:
+                parts = line.split(':', 1)
+                original = parts[0].strip().replace('- ', '')
+                standardized = parts[1].strip()
+                standardized_metrics[original] = standardized
+        
+        # Handle cases where GPT didn't follow the exact format
+        for metric in unique_metrics:
+            if metric not in standardized_metrics:
+                # Look for a line that contains this metric
+                for line in response_lines:
+                    if metric in line and ':' in line:
+                        parts = line.split(':', 1)
+                        standardized = parts[1].strip()
+                        standardized_metrics[metric] = standardized
+                        break
+        
+        # Apply standardization to the DataFrame
+        df['metric'] = df['metric'].apply(lambda x: standardized_metrics.get(x, x))
+        
+        return df
+    
+    except Exception as e:
+        st.warning(f"⚠️ Error standardizing metrics: {str(e)}")
+        return df  # Return original dataframe if there's an error
+
+def split_gaap_non_gaap(df):
+    """Split rows that contain both GAAP and non-GAAP guidance into separate rows"""
+    if 'value_or_range' not in df.columns or 'metric' not in df.columns:
+        return df  # Avoid crash if column names are missing
+
+    rows = []
+    for _, row in df.iterrows():
+        val = str(row['value_or_range'])
+        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
+        if match:
+            gaap_val = match.group(1).strip() + " GAAP"
+            non_gaap_val = match.group(2).strip() + " non-GAAP"
+            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
+                new_row = row.copy()
+                new_row["value_or_range"] = new_val
+                new_row["metric"] = f"{row['metric']} ({label})"
+                rows.append(new_row)
+        else:
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+def format_guidance_values(df):
+    """Format the numeric values to appropriate formats based on the metric and value types"""
+    # Make a copy to avoid modifying the original
+    formatted_df = df.copy()
+    
+    for idx, row in df.iterrows():
+        value_text = str(row.get('value_or_range', ''))
+        
+        # Determine if it's a percentage value
+        is_percentage = '%' in value_text
+        
+        # Determine if it's a dollar value
+        is_dollar = '$' in value_text
+        
+        # Format the Low, High, Average columns based on the value type
+        for col in ['low', 'high', 'average']:
+            if col in df.columns and not pd.isnull(row.get(col)):
+                try:
+                    val = float(row[col])
+                    
+                    if is_percentage:
+                        formatted_df.at[idx, col] = f"{val:.1f}%"
+                    elif is_dollar:
+                        if abs(val) >= 100:
+                            formatted_df.at[idx, col] = f"${val:.0f}"
+                        elif abs(val) >= 10:
+                            formatted_df.at[idx, col] = f"${val:.1f}"
+                        else:
+                            formatted_df.at[idx, col] = f"${val:.2f}"
+                except:
+                    # Skip if we can't parse as float
+                    continue
+    
+    return formatted_df
 
 # Streamlit App Setup
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
@@ -566,41 +584,6 @@ def find_guidance_paragraphs(text):
     
     return formatted_paragraphs, found_paragraphs
 
-def format_guidance_values(df):
-    """Format the numeric values to appropriate formats based on the metric and value types"""
-    # Make a copy to avoid modifying the original
-    formatted_df = df.copy()
-    
-    for idx, row in df.iterrows():
-        value_text = str(row.get('value_or_range', ''))
-        
-        # Determine if it's a percentage value
-        is_percentage = '%' in value_text
-        
-        # Determine if it's a dollar value
-        is_dollar = '$' in value_text
-        
-        # Format the Low, High, Average columns based on the value type
-        for col in ['low', 'high', 'average']:
-            if col in df.columns and not pd.isnull(row.get(col)):
-                try:
-                    val = float(row[col])
-                    
-                    if is_percentage:
-                        formatted_df.at[idx, col] = f"{val:.1f}%"
-                    elif is_dollar:
-                        if abs(val) >= 100:
-                            formatted_df.at[idx, col] = f"${val:.0f}"
-                        elif abs(val) >= 10:
-                            formatted_df.at[idx, col] = f"${val:.1f}"
-                        else:
-                            formatted_df.at[idx, col] = f"${val:.2f}"
-                except:
-                    # Skip if we can't parse as float
-                    continue
-    
-    return formatted_df
-
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -686,12 +669,8 @@ if st.button("🔍 Extract Guidance"):
                                 if 'Value or range' in df.columns:
                                     df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
                             
-                            # Apply metric standardization
-                            if 'metric' in df.columns:
-                                df = standardize_metrics(df.rename(columns={'metric': 'Metric'}))
-                                # Rename back to standard naming
-                                if 'Metric' in df.columns:
-                                    df.rename(columns={'Metric': 'metric'}, inplace=True)
+                            # Use GPT to standardize metric names
+                            df = standardize_metrics_with_gpt(df, client, model_id)
                             
                             # Add metadata columns
                             df["filing_date"] = date_str
