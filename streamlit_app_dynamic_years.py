@@ -47,6 +47,13 @@ def fix_metrics_with_gpt(df, client, model_name):
 3. Remove phrases like "attributable to [company name]" or "attributable to common stockholders"
 4. Standardize to these canonical forms, but ONLY if they match the specific metric type:
 
+REVENUE METRICS:
+- "Revenue" for ANY revenue metric, including GAAP Revenue, Total Revenue, Total GAAP Revenue, Net Revenue, etc.
+- "Organic Revenue" for organic revenue, organic growth
+- "Billings" for billings or bookings
+- "ARR" for Annual Recurring Revenue or Annualized Recurring Revenue
+- "RPO" for Remaining Performance Obligation
+
 EARNINGS METRICS:
 - "Non-GAAP EPS" for non-GAAP earnings per share or non-GAAP net income per share
 - "GAAP EPS" for GAAP earnings per share or GAAP net income per share
@@ -60,13 +67,6 @@ OPERATING METRICS:
 - "Non-GAAP Operating Margin" for any non-GAAP operating margin
 - "GAAP Operating Margin" for any GAAP operating margin
 - "Operating Cash Flow" for operating cash flow or cash flow from operations
-
-REVENUE METRICS:
-- "Revenue" for revenue, net revenue, net sales, total revenue
-- "Organic Revenue" for organic revenue, organic growth
-- "Billings" for billings or bookings
-- "ARR" for Annual Recurring Revenue or Annualized Recurring Revenue
-- "RPO" for Remaining Performance Obligation
 
 MARGIN METRICS:
 - "Gross Margin" for any gross margin metric
@@ -142,13 +142,18 @@ For each metric below, respond with the fixed version:
             fixed = fixed.replace('arr', 'ARR')
             fixed = fixed.replace('rpo', 'RPO')
             
+            # Basic revenue standardization as fallback
+            lower_fixed = fixed.lower()
+            if 'revenue' in lower_fixed:
+                fixed = 'Revenue'
+            
             fixed_metrics[metric] = fixed.strip()
     
     # Apply fixes to the dataframe
     df['metric'] = df['metric'].apply(lambda x: fixed_metrics.get(x, x))
     
     return df
-
+    
 def extract_guidance(text, ticker, client, model_name):
     """
     Enhanced function to extract guidance from SEC filings.
