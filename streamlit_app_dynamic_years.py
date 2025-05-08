@@ -9,7 +9,30 @@ import re
 
 # ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
 number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
-
+# After parsing the table from OpenAI's response:
+if table and "|" in table:
+    rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+    if len(rows) > 1:  # Check if we have header and at least one row of data
+        # First, standardize the column names
+        column_names = [c.strip() for c in rows[0]]
+        
+        # Check for and rename "Value or range" column to "Value" for processing
+        for i, col in enumerate(column_names):
+            if "value" in col.lower() or "range" in col.lower():
+                column_names[i] = "Value"  # Standardize the column name for processing
+                
+        # Create DataFrame with standardized column names
+        df = pd.DataFrame(rows[1:], columns=column_names)
+        
+        # Save the original value column name for later
+        original_value_column_name = next((col for col in rows[0] if "value" in col.lower() or "range" in col.lower()), "Value")
+        
+        # Continue with processing as before
+        # ...
+        
+        # Before adding metadata columns, rename "Value" back to original column name if needed
+        if "Value" in df.columns and original_value_column_name != "Value":
+            df.rename(columns={"Value": original_value_column_name}, inplace=True)
 def extract_number(token: str):
     """
     Enhanced function to extract numeric values from text, with improved handling of 
