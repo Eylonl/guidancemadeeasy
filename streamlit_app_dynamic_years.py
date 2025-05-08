@@ -1071,6 +1071,13 @@ if st.button("🔍 Extract Guidance"):
                         if len(rows) > 1:  # Check if we have header and at least one row of data
                             df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
                             
+                            # Debug: Print original dataframe 
+                            st.write("Original table from OpenAI:")
+                            st.write(df)
+                            
+                            # Save the original Value column to restore later
+                            original_values = df['Value'].copy() if 'Value' in df.columns else None
+                            
                             # Store which rows have percentages or parenthetical values in the Value column
                             percentage_rows = []
                             parenthetical_rows = []
@@ -1112,6 +1119,14 @@ if st.button("🔍 Extract Guidance"):
                             
                             # Apply metric standardization (only changes the Metric column)
                             df = standardize_metrics(df)
+                            
+                            # Restore the original Value column
+                            if original_values is not None:
+                                df['Value'] = original_values
+                                
+                            # Debug: Print after processing
+                            st.write("After processing:")
+                            st.write(df)
                             
                             # Add metadata columns
                             df["FilingDate"] = date_str
@@ -1178,7 +1193,7 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-                # Add download button
+               # Add download button
                 import io
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
