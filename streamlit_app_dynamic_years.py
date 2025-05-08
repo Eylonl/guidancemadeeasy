@@ -1150,21 +1150,28 @@ if results:
     # Combine all results
     combined = pd.concat(results, ignore_index=True)
     
-# Define the order of columns without removing any existing columns
-primary_columns = [
-    "Metric", "Value", "Period", "PeriodType", 
-    "Low", "High", "Average", "FilingDate", 
-    "8K_Link", "Model_Used"
-]
+# Find this section in the code around line 850
+# In the if results: block, locate this part:
 
-# Create a list with primary columns first, then any other columns that might exist
-all_columns = primary_columns + [col for col in combined.columns if col not in primary_columns]
-
-# Filter to only include columns that actually exist in the DataFrame
-final_columns = [col for col in all_columns if col in combined.columns]
-
-# Reorder columns without removing any
-combined = combined[final_columns]
+if results:
+    # Combine all results
+    combined = pd.concat(results, ignore_index=True)
+    
+    # Define the order of columns without removing any existing columns
+    primary_columns = [
+        "Metric", "Value", "Period", "PeriodType", 
+        "Low", "High", "Average", "FilingDate", 
+        "8K_Link", "Model_Used"
+    ]
+    
+    # Create a list with primary columns first, then any other columns that might exist
+    all_columns = primary_columns + [col for col in combined.columns if col not in primary_columns]
+    
+    # Filter to only include columns that actually exist in the DataFrame
+    final_columns = [col for col in all_columns if col in combined.columns]
+    
+    # Reorder columns without removing any
+    combined = combined[final_columns]
     
     # Preview the table
     st.subheader("🔍 Preview of Extracted Guidance")
@@ -1180,7 +1187,7 @@ combined = combined[final_columns]
         if "Value" not in value_included_cols:
             value_included_cols.insert(1, "Value")  # Insert Value as the second column
         display_df = combined[value_included_cols]
-                
+        
                 # Apply custom formatting when displaying
                 # Convert numeric columns to appropriate string formats
                 for col in ['Low', 'High', 'Average']:
