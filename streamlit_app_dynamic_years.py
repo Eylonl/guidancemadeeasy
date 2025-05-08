@@ -88,7 +88,7 @@ def format_dollar(val):
 def parse_value_range(text: str):
     """
     Enhanced function to parse value ranges from guidance text.
-    Fixed to properly handle mixed-sign ranges (-1 to 1).
+    Properly handles parenthetical negative notation throughout.
     """
     if not isinstance(text, str):
         return (None, None, None)
@@ -120,17 +120,6 @@ def parse_value_range(text: str):
         val = float(decrease_match.group(1))
         return (-val, -val, -val)
     
-    # Check for explicit mixed-sign range patterns like "-1 to 1"
-    mixed_sign_pattern = re.search(r'-(\d+(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:\.\d+)?)[^-]', text, re.I)
-    if mixed_sign_pattern:
-        # This is a legitimate mixed-sign range - parse the values directly
-        lo = -float(mixed_sign_pattern.group(1).replace(',', ''))
-        hi = float(mixed_sign_pattern.group(2).replace(',', ''))
-        avg = (lo + hi) / 2
-        return (lo, hi, avg)
-    
-    # Rest of the function continues as before...
-    
     # First look for precise ranges with "to" between values
     # 1. Dollar to dollar with amount qualifier: "$181 million to $183 million"
     dollar_to_full_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)?\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)?', text, re.I)
@@ -153,7 +142,57 @@ def parse_value_range(text: str):
         avg = (lo + hi) / 2 if lo is not None and hi is not None else None
         return (lo, hi, avg)
 
-    # Other parsing code remains the same...
+    # 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
+    dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
+    if dollar_to_range:
+        lo = extract_number(dollar_to_range.group(1))
+        hi = extract_number(dollar_to_range.group(2))
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # 3. Simple numeric range with unit after: "181 to 183 million" or "181-183 million"
+    numeric_unit_range = re.search(r'(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)', text, re.I)
+    if numeric_unit_range:
+        lo_val = numeric_unit_range.group(1)
+        hi_val = numeric_unit_range.group(2)
+        unit_match = re.search(r'\b(million|billion|M|B)\b', text, re.I)
+        unit = unit_match.group(1) if unit_match else ""
+        
+        lo = extract_number(f"{lo_val} {unit}")
+        hi = extract_number(f"{hi_val} {unit}")
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # 4. Percent to percent: "5% to 7%" or "-14% to -13%"
+    percent_to_range = re.search(r'(-?\d+(?:\.\d+)?)\s*%\s*(?:to|[-–—~])\s*(-?\d+(?:\.\d+)?)\s*%', text, re.I)
+    if percent_to_range:
+        lo = float(percent_to_range.group(1))
+        hi = float(percent_to_range.group(2))
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # 5. Number to number: "100 to 110" or "-100 to -90" or "181 to 183"
+    number_to_range = re.search(fr'(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
+    if number_to_range:
+        lo = float(number_to_range.group(1).replace(',', ''))
+        hi = float(number_to_range.group(2).replace(',', ''))
+        
+        # Check if we need to make both values negative based on context
+        if contains_negative_indicator and not (str(lo).startswith('-') or str(hi).startswith('-')):
+            # Both should be negative if we have negative indicators
+            if re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I):
+                lo, hi = -abs(lo), -abs(hi)
+        
+        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
+        return (lo, hi, avg)
+    
+    # Special handling for specific patterns
+    
+    # Handle parenthetical values like "(0.05)" or "($0.05)"
+    parenthetical_value = re.search(r'\(\s*\$?\s*(\d+(?:\.\d+)?)\s*\)', text, re.I)
+    if parenthetical_value:
+        val = float(parenthetical_value.group(1))
+        return (-val, -val, -val)  # Parenthetical values are always negative in financial context
     
     # Finally check for a single value
     single = re.search(number_token, text, re.I)
@@ -304,11 +343,10 @@ def correct_value_signs(df):
     
     return df
 
-
 def check_range_consistency(df):
     """
     Improved function to check for and fix inconsistencies in range parsing.
-    Fixed to properly handle mixed-sign ranges like "$(1) million to $1 million".
+    More cautious about applying corrections to avoid false negatives.
     """
     for idx, row in df.iterrows():
         # Get low and high values if they exist
@@ -338,29 +376,20 @@ def check_range_consistency(df):
         # Get original value text for context
         original_value = str(row.get('Value', ''))
         
-        # Handle mixed sign cases (low negative, high positive)
+        # Extract explicit negative indicators from the original value
+        has_parenthetical_notation = '(' in original_value and ')' in original_value and re.search(r'\(\s*\$?\s*\d', original_value)
+        has_minus_sign = '-' in original_value and re.search(r'-\s*\$?\s*\d', original_value)
+        
+        # Check if there's explicit negative language (not just generic "decrease" which could be positive)
+        has_negative_language = re.search(r'\b(?:loss|deficit|negative)\b', original_value, re.I)
+        
+        # 1. If low is negative and high is positive, but clear indicators that both should be negative
         if low_val < 0 and high_val > 0:
-            # Check for explicit patterns showing it's intentionally mixed signs
-            
-            # Pattern for "$(1) million to $1 million" or similar mixed ranges
-            mixed_parenthetical_pattern = re.search(r'\$?\(\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*\$?\s*\d+', original_value, re.I)
-            
-            # Pattern for "-$1 million to $1 million" or similar mixed ranges with minus sign
-            mixed_minus_pattern = re.search(r'-\s*\$?\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*\$?\s*\d+', original_value, re.I)
-            
-            # If we have a clear mixed-sign range pattern, don't change anything (keep high positive)
-            if mixed_parenthetical_pattern or mixed_minus_pattern:
-                # Intentionally a mixed sign range - do not modify high value
-                continue
-                
-            # For other cases, more restrictive checks for when both should be negative
-            
-            # Check for parenthetical notation around both numbers or minus signs on both numbers
-            both_parenthetical = re.search(r'\(\s*\$?\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*\(\s*\$?\s*\d+(?:\.\d+)?\s*\)', original_value, re.I)
-            both_minus = re.search(r'-\s*\$?\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s*(?:to|[-–—~])\s*-\s*\$?\s*\d+', original_value, re.I)
-            
-            # ONLY make both negative if we have VERY CLEAR indicators both should be negative
-            should_both_be_negative = both_parenthetical or both_minus
+            should_both_be_negative = (
+                has_parenthetical_notation or 
+                has_minus_sign or 
+                has_negative_language
+            )
             
             if should_both_be_negative:
                 # Both values should be negative - fix the high value
@@ -398,6 +427,7 @@ def check_range_consistency(df):
                         df.at[idx, 'Average'] = avg
     
     return df
+
 def split_gaap_non_gaap(df):
     if 'Value' not in df.columns or 'Metric' not in df.columns:
         return df  # Avoid crash if column names are missing
@@ -597,6 +627,75 @@ Respond in table format without commentary.\n\n{text}"""
     except Exception as e:
         st.warning(f"⚠️ Error extracting guidance: {str(e)}")
         return None
+
+# Add this new function to fix mixed sign ranges
+def fix_mixed_ranges(df):
+    """
+    Direct fix for mixed sign ranges like "$(1) million to $1 million".
+    This will ensure the High column is positive when dealing with these ranges.
+    """
+    if 'Value or range' not in df.columns or 'Low' not in df.columns or 'High' not in df.columns:
+        return df  # Skip if any required columns are missing
+    
+    for idx, row in df.iterrows():
+        value_text = str(row.get('Value or range', ''))
+        
+        # Check for mixed-sign range patterns like "$(1) million to $1 million" or similar
+        mixed_range_pattern = (
+            # Has a negative parenthetical value followed by a positive value in a range
+            (('$(' in value_text or '( ' in value_text) and 
+             ('to $' in value_text or 'to ' in value_text) and
+             not (' to (' in value_text) and # Second part is not in parentheses 
+             not (' to -' in value_text))    # Second part is not negative
+        )
+        
+        # If we detect a mixed-sign range
+        if mixed_range_pattern:
+            # Get the values
+            low_val = row.get('Low')
+            high_val = row.get('High')
+            
+            # Skip if either value is missing
+            if pd.isnull(low_val) or pd.isnull(high_val):
+                continue
+                
+            # Convert to numeric if needed
+            if isinstance(low_val, str):
+                try:
+                    low_num = float(re.sub(r'[^\d.-]', '', low_val))
+                except:
+                    continue  # Skip if can't parse
+            else:
+                low_num = low_val
+                
+            if isinstance(high_val, str):
+                try:
+                    high_num = float(re.sub(r'[^\d.-]', '', high_val))
+                except:
+                    continue  # Skip if can't parse
+            else:
+                high_num = high_val
+            
+            # If low is negative and high is also negative (incorrectly)
+            if low_num < 0 and high_num < 0:
+                # Fix the high value - make it positive
+                if isinstance(high_val, str):
+                    # Preserve formatting while making positive
+                    if '%' in high_val:
+                        df.at[idx, 'High'] = f"{abs(high_num):.1f}%"
+                    elif '$' in high_val:
+                        if abs(high_num) >= 100:
+                            df.at[idx, 'High'] = f"${abs(high_num):.0f}"
+                        elif abs(high_num) >= 10:
+                            df.at[idx, 'High'] = f"${abs(high_num):.1f}"
+                        else:
+                            df.at[idx, 'High'] = f"${abs(high_num):.2f}"
+                    else:
+                        df.at[idx, 'High'] = f"{abs(high_num)}"
+                else:
+                    df.at[idx, 'High'] = abs(high_num)
+    
+    return df
 
 # Streamlit App Setup
 st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
@@ -1099,6 +1198,9 @@ if st.button("🔍 Extract Guidance"):
                                 
                                 # Apply a final consistency check to fix any remaining issues with negative ranges
                                 df = check_range_consistency(df)
+                                
+                                # Apply the targeted fix for mixed-sign ranges
+                                df = fix_mixed_ranges(df)
                                 
                                 # Apply metric standardization (only changes the Metric column)
                                 df = standardize_metrics(df)
