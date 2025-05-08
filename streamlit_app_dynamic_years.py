@@ -1180,18 +1180,6 @@ if st.button("🔍 Extract Guidance"):
                 display_cols = ["Metric", "Value or range", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
                 display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
                 
-                # Apply custom formatting when displaying
-                # Convert numeric columns to appropriate string formats
-                for col in ['Low', 'High', 'Average']:
-                    if col in display_df.columns:
-                        display_df[col] = display_df[col].apply(
-                            lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
-                                      any('%' in str(row.get('Value or range', '')) for _, row in display_df.iterrows()) 
-                                      else format_dollar(x) if isinstance(x, (int, float)) and 
-                                      any('$' in str(row.get('Value or range', '')) for _, row in display_df.iterrows())
-                                      else x)
-                        )
-                
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
