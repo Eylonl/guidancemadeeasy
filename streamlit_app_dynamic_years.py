@@ -7,62 +7,6 @@ import pandas as pd
 import os
 import re
 
-# ─── NUMBER & RANGE PARSING HELPERS ───────────────────────────────────────────
-number_token = r'[-+]?\d[\d,\.]*\s*(?:[KMB]|million|billion)?'
-
-def extract_number(token: str):
-    """
-    Enhanced function to extract numeric values from text, with improved handling of 
-    both explicit negative signs and parenthetical negative notation.
-    """
-    if not token or not isinstance(token, str):
-        return None
-    
-    # Store original token for reference
-    original_token = token.strip()
-    
-    # Check if the token is a negative value with a leading - sign
-    is_negative_sign = original_token.startswith('-')
-    
-    # Check for common financial notation of parentheses to indicate negative
-    # Look for patterns like (0.05) or ( 0.05 ) - with optional whitespace
-    is_parenthetical_negative = (
-        (original_token.startswith('(') and original_token.endswith(')')) or
-        re.match(r'^\(\s*\$?\s*\d+(?:\.\d+)?\s*\)$', original_token)
-    )
-    
-    # Determine if the value should be treated as negative
-    is_negative = is_negative_sign or is_parenthetical_negative
-    
-    # Remove parentheses, dollar signs, and commas for numerical processing
-    tok = original_token.replace('(', '').replace(')', '').replace('$','') \
-                        .replace(',', '').replace('-', '').replace('+', '').strip().lower()
-
-# Convert billions to millions (multiply by 1000)
-    factor = 1.0
-    if 'billion' in tok or tok.endswith('b'):
-        if 'billion' in tok:
-            tok = tok.replace('billion', '').strip()
-        elif tok.endswith('b'):
-            tok = tok[:-1].strip()
-        factor = 1000.0  # Convert to millions
-    elif 'million' in tok or tok.endswith('m'):
-        if 'million' in tok:
-            tok = tok.replace('million', '').strip()
-        elif tok.endswith('m'):
-            tok = tok[:-1].strip()
-        factor = 1.0
-    elif tok.endswith('k'):
-        tok = tok[:-1].strip()
-        factor = 0.001
-    
-    try:
-        val = float(tok) * factor
-        return -val if is_negative else val
-    except:
-        return None
-
-
 def format_percent(val):
     """Format a value as a percentage with consistent decimal places"""
     if val is None:
@@ -85,326 +29,22 @@ def format_dollar(val):
             return f"${val:.2f}"
     return val
 
-def parse_value_range(text: str):
-    """
-    Enhanced function to parse value ranges from guidance text.
-    Properly handles parenthetical negative notation throughout.
-    """
-    if not isinstance(text, str):
-        return (None, None, None)
-    
-    # Check for "flat" or "unchanged"
-    if re.search(r'\b(flat|unchanged)\b', text, re.I):
-        return (0.0, 0.0, 0.0)
-    
-    # Detect patterns that clearly indicate negative values
-    contains_negative_indicator = (
-        '(' in text and ')' in text or  # Parenthetical notation
-        '-' in text or                  # Explicit minus sign
-        re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I)  # Negative words
-    )
-    
-    # Handle negative values in parentheses (common financial notation)
-    # Convert formats like "$(0.05)" or "(0.05)" to "-$0.05" or "-0.05"
-    text = re.sub(r'\$\s*\(\s*(\d+(?:\.\d+)?)\s*\)', r'-$\1', text)
-    text = re.sub(r'\(\s*(\d+(?:\.\d+)?)\s*\)%', r'-\1%', text)
-    text = re.sub(r'\(\s*\$?\s*(\d+(?:\.\d+)?)\s*\)', r'-\1', text)
-    
-    # Additional handling for percentage cases with parentheses
-    text = re.sub(r'\(\s*(\d+(?:\.\d+)?)\s*%\s*\)', r'-\1%', text)  # Replace (5%) with -5%
-    text = re.sub(r'~\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)', r'-\1%', text)  # Replace ~(5%) with -5%
-    
-    # Handle "decrease of X%" pattern
-    decrease_match = re.search(r'decrease\s+of\s+([0-9\.]+)%', text, re.I)
-    if decrease_match:
-        val = float(decrease_match.group(1))
-        return (-val, -val, -val)
-    
-    # First look for precise ranges with "to" between values
-    # 1. Dollar to dollar with amount qualifier: "$181 million to $183 million"
-    dollar_to_full_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)?\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)?', text, re.I)
-    if dollar_to_full_range:
-        lo_text = dollar_to_full_range.group(1)
-        hi_text = dollar_to_full_range.group(2)
-        
-        # Extract any unit qualifier (million/billion) that might come after the range
-        unit_match = re.search(r'\b(million|billion|M|B)\b', text, re.I)
-        unit = unit_match.group(1).lower() if unit_match else None
-        
-        # If unit exists, append it to each value for proper parsing
-        if unit and not re.search(r'\b(million|billion|M|B)\b', lo_text, re.I):
-            lo_text = f"{lo_text} {unit}"
-        if unit and not re.search(r'\b(million|billion|M|B)\b', hi_text, re.I):
-            hi_text = f"{hi_text} {unit}"
-        
-        lo = extract_number(lo_text)
-        hi = extract_number(hi_text)
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-
-    # 2. Dollar to dollar: "$0.08 to $0.09" or "-$0.08 to -$0.06"
-    dollar_to_range = re.search(r'(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(-?\$\s*\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
-    if dollar_to_range:
-        lo = extract_number(dollar_to_range.group(1))
-        hi = extract_number(dollar_to_range.group(2))
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # 3. Simple numeric range with unit after: "181 to 183 million" or "181-183 million"
-    numeric_unit_range = re.search(r'(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:million|billion|M|B)', text, re.I)
-    if numeric_unit_range:
-        lo_val = numeric_unit_range.group(1)
-        hi_val = numeric_unit_range.group(2)
-        unit_match = re.search(r'\b(million|billion|M|B)\b', text, re.I)
-        unit = unit_match.group(1) if unit_match else ""
-        
-        lo = extract_number(f"{lo_val} {unit}")
-        hi = extract_number(f"{hi_val} {unit}")
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # 4. Percent to percent: "5% to 7%" or "-14% to -13%"
-    percent_to_range = re.search(r'(-?\d+(?:\.\d+)?)\s*%\s*(?:to|[-–—~])\s*(-?\d+(?:\.\d+)?)\s*%', text, re.I)
-    if percent_to_range:
-        lo = float(percent_to_range.group(1))
-        hi = float(percent_to_range.group(2))
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # 5. Number to number: "100 to 110" or "-100 to -90" or "181 to 183"
-    number_to_range = re.search(fr'(\d+(?:,\d+)?(?:\.\d+)?)\s*(?:to|[-–—~])\s*(\d+(?:,\d+)?(?:\.\d+)?)', text, re.I)
-    if number_to_range:
-        lo = float(number_to_range.group(1).replace(',', ''))
-        hi = float(number_to_range.group(2).replace(',', ''))
-        
-        # Check if we need to make both values negative based on context
-        if contains_negative_indicator and not (str(lo).startswith('-') or str(hi).startswith('-')):
-            # Both should be negative if we have negative indicators
-            if re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I):
-                lo, hi = -abs(lo), -abs(hi)
-        
-        avg = (lo + hi) / 2 if lo is not None and hi is not None else None
-        return (lo, hi, avg)
-    
-    # Special handling for specific patterns
-    
-    # Handle parenthetical values like "(0.05)" or "($0.05)"
-    parenthetical_value = re.search(r'\(\s*\$?\s*(\d+(?:\.\d+)?)\s*\)', text, re.I)
-    if parenthetical_value:
-        val = float(parenthetical_value.group(1))
-        return (-val, -val, -val)  # Parenthetical values are always negative in financial context
-    
-    # Finally check for a single value
-    single = re.search(number_token, text, re.I)
-    if single:
-        v = extract_number(single.group(0))
-        
-        # If the original text indicates the value is negative but our parsed value is positive,
-        # correct it to be negative
-        if contains_negative_indicator and v is not None and v > 0:
-            if re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', text, re.I):
-                v = -v
-        
-        return (v, v, v)
-    
-    return (None, None, None)
-
-def correct_value_signs(df):
-    """
-    Improved function to ensure the sign (positive/negative) of values 
-    is correctly applied based on the context in the original text.
-    
-    This version is more cautious about applying negative signs and includes
-    better detection of explicitly positive values.
-    """
-    if 'Value' not in df.columns:
-        return df  # Skip if Value column is missing
-    
-    for idx, row in df.iterrows():
-        value_text = str(row.get('Value', ''))
-        
-        # Extract actual numeric representations in the value text for direct analysis
-        numeric_pattern = re.search(r'(-?\$?\s*\d+(?:,\d+)*(?:\.\d+)?|\(\s*\$?\s*\d+(?:,\d+)*(?:\.\d+)?\s*\))', value_text)
-        numeric_repr = numeric_pattern.group(0) if numeric_pattern else ""
-        
-        # Determine if the value is explicitly represented as negative
-        is_explicitly_negative = (
-            # Check for parenthetical notation with a number
-            (numeric_repr.startswith('(') and numeric_repr.endswith(')') and re.search(r'\(\s*\$?\s*\d', numeric_repr)) or
-            # Check for explicit minus sign before a number
-            (numeric_repr.startswith('-') and re.search(r'-\s*\$?\s*\d', numeric_repr))
-        )
-        
-        # Look for explicit negative indicators in surrounding context
-        has_negative_context = (
-            # Only consider contextual words if the number itself isn't explicitly positive or negative
-            not is_explicitly_negative and
-            re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', value_text, re.I) and
-            # Make sure we don't have contradicting positive indicators
-            not re.search(r'\b(?:growth|increase|up|positive|profit)\b', value_text, re.I) and
-            # Check the metric name for clear negative terms
-            (any(neg_term in str(row.get('Metric', '')).lower() for neg_term in ['loss', 'deficit', 'decrease']))
-        )
-        
-        # Determine if the value should be negative
-        should_be_negative = is_explicitly_negative or has_negative_context
-        
-        # Determine if the value is explicitly positive
-        is_explicitly_positive = (
-            # Check for dollar sign without negative indicators
-            ('$' in numeric_repr and not numeric_repr.startswith('-') and 
-             not (numeric_repr.startswith('(') and numeric_repr.endswith(')'))) or
-            # Check for a plain positive number
-            (re.search(r'^\d', numeric_repr.strip()) and not 
-             (numeric_repr.startswith('(') and numeric_repr.endswith(')')))
-        )
-        
-        # Look for explicit positive indicators in surrounding context
-        has_positive_context = (
-            not is_explicitly_negative and
-            re.search(r'\b(?:growth|increase|up|positive|profit|gain)\b', value_text, re.I) and
-            not re.search(r'\b(?:loss|decrease|down|negative|deficit)\b', value_text, re.I)
-        )
-        
-        # Determine if the value should be positive
-        should_be_positive = is_explicitly_positive or has_positive_context
-        
-        # Resolve conflicts - if we have contradicting indicators, 
-        # explicit representation in the number takes precedence
-        if should_be_negative and should_be_positive:
-            if is_explicitly_negative:
-                should_be_positive = False
-            elif is_explicitly_positive:
-                should_be_negative = False
-            else:
-                # If no explicit indicators in the numeric representation,
-                # default to keeping the value as-is (don't change sign)
-                should_be_negative = False
-                should_be_positive = False
-        
-        # Apply corrections to Low, High, Average columns
-        for col in ['Low', 'High', 'Average']:
-            if col not in df.columns or pd.isnull(row.get(col)):
-                continue
-                
-            val = row[col]
-            
-            # Skip if the value is already null
-            if val is None:
-                continue
-                
-            # Convert to numeric for comparison if it's a string
-            if isinstance(val, str):
-                # Extract numeric value from string
-                try:
-                    val_numeric = float(re.sub(r'[^\d.-]', '', val))
-                    
-                    # Only fix values that have the wrong sign based on our determination
-                    if should_be_negative and val_numeric > 0:
-                        # Value should be negative but is positive
-                        if '%' in val:
-                            df.at[idx, col] = f"-{abs(val_numeric):.1f}%"
-                        elif '$' in val:
-                            if abs(val_numeric) >= 100:
-                                df.at[idx, col] = f"-${abs(val_numeric):.0f}"
-                            elif abs(val_numeric) >= 10:
-                                df.at[idx, col] = f"-${abs(val_numeric):.1f}"
-                            else:
-                        st.warning(f"⚠️ No guidance table found in {url}")
-                        
-                        # Show a sample of the text to help debug
-                        st.write("Sample of text sent to OpenAI:")
-                        sample_length = min(500, len(guidance_paragraphs))
-                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                except Exception as e:
-                    st.warning(f"Could not process: {url}. Error: {str(e)}")
-
-            if results:
-                # Combine all results
-                combined = pd.concat(results, ignore_index=True)
-                
-                # Define the order of columns without removing any existing columns
-                primary_columns = [
-                    "Metric", "Value or range", "Period", "PeriodType", 
-                    "Low", "High", "Average", "FilingDate", 
-                    "8K_Link", "Model_Used"
-                ]
-                
-                # Preview the table
-                st.subheader("🔍 Preview of Extracted Guidance")
-                
-                # Select the most relevant columns for display
-                display_cols = ["Metric", "Value or range", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
-                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
-                
-                # Display the table with formatting
-                st.dataframe(display_df, use_container_width=True)
-                
-                # Add download button
-                import io
-                excel_buffer = io.BytesIO()
-                combined.to_excel(excel_buffer, index=False)
-                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            else:
-                st.warning("No guidance data extracted."):
-                                df.at[idx, col] = f"-${abs(val_numeric):.2f}"
-                        else:
-                            # Just a number
-                            df.at[idx, col] = f"-{abs(val_numeric)}"
-                            
-                    elif should_be_positive and val_numeric < 0:
-                        # Value should be positive but is negative
-                        if '%' in val:
-                            df.at[idx, col] = f"{abs(val_numeric):.1f}%"
-                        elif '$' in val:
-                            if abs(val_numeric) >= 100:
-                                df.at[idx, col] = f"${abs(val_numeric):.0f}"
-                            elif abs(val_numeric) >= 10:
-                                df.at[idx, col] = f"${abs(val_numeric):.1f}"
-                            else:
-                                df.at[idx, col] = f"${abs(val_numeric):.2f}"
-                        else:
-                            # Just a number
-                            df.at[idx, col] = f"{abs(val_numeric)}"
-                except ValueError:
-                    continue
-                    
-            else:  # Numeric value
-                # Only fix values that have the wrong sign based on our determination
-                if should_be_negative and val > 0:
-                    # Value should be negative but is positive
-                    df.at[idx, col] = -abs(val)
-                elif should_be_positive and val < 0:
-                    # Value should be positive but is negative
-                    df.at[idx, col] = abs(val)
-    
-    return df
-
-def check_range_consistency(df):
-    """
-    Simplified function that will NEVER make a positive High value negative.
-    This completely solves the issue with mixed-sign ranges.
-    """
-    # Return the dataframe unmodified - don't change any signs
-    return df
-
 def split_gaap_non_gaap(df):
-    if 'Value' not in df.columns or 'Metric' not in df.columns:
+    """Split rows that contain both GAAP and non-GAAP guidance into separate rows"""
+    if 'Value or range' not in df.columns or 'Metric' not in df.columns:
         return df  # Avoid crash if column names are missing
 
     rows = []
     for _, row in df.iterrows():
-        val = str(row['Value'])
+        val = str(row['Value or range'])
         match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
         if match:
             gaap_val = match.group(1).strip() + " GAAP"
             non_gaap_val = match.group(2).strip() + " non-GAAP"
             for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
                 new_row = row.copy()
-                new_row["Value"] = new_val
+                new_row["Value or range"] = new_val
                 new_row["Metric"] = f"{row['Metric']} ({label})"
-                lo, hi, avg = parse_value_range(new_val)
-                new_row["Low"], new_row["High"], new_row["Average"] = format_percent(lo), format_percent(hi), format_percent(avg)
                 rows.append(new_row)
         else:
             rows.append(row)
@@ -498,123 +138,35 @@ def standardize_metrics(df):
     
     return df
 
-def post_process_ranges(combined_df):
-    """
-    Direct manual post-processing to ensure proper handling of mixed-sign ranges.
-    This handles all types of metrics including margins and EPS.
-    """
-    # Look for specific problematic patterns where Low might be negative but High should be positive
-    if 'Value or range' not in combined_df.columns or 'Low' not in combined_df.columns or 'High' not in combined_df.columns:
-        return combined_df
-    
-    # Make a copy to avoid modifying the original
-    fixed_df = combined_df.copy()
-    
-    # Keep track if we found and fixed any issues
-    fixed_count = 0
-    
-    for idx, row in fixed_df.iterrows():
-        value_text = str(row['Value or range'])
-        
-        # Convert values to numeric for comparison
-        try:
-            # Get Low value
-            if isinstance(row['Low'], str):
-                low_val = float(re.sub(r'[^\d.-]', '', row['Low']))
-            else:
-                low_val = float(row['Low']) if row['Low'] is not None else 0
-                
-            # Get High value
-            if isinstance(row['High'], str):
-                high_val = float(re.sub(r'[^\d.-]', '', row['High']))
-            else:
-                high_val = float(row['High']) if row['High'] is not None else 0
-        except:
-            continue
-        
-        # Check if Low is negative and High is also negative (the issue we need to fix)
-        if low_val < 0 and high_val < 0:
-            # Check specifically for patterns of mixed signs:
-            # 1. Dollar ranges with parentheses for negative: "$(1) million to $1 million"
-            # 2. Percentage ranges with parentheses for negative: "(5%) to 2%"
-            # 3. EPS ranges with parentheses for negative: "$(0.05) to $0.10"
-            # 4. General numeric ranges with minus signs: "-1 to 1"
-            
-            # Patterns to check for all metric types
-            patterns = [
-                # Dollar ranges (with parentheses for negative)
-                r'\$\s*\(\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s+to\s+\$\s*\d+',
-                # Dollar ranges (with minus sign for negative)
-                r'-\s*\$\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s+to\s+\$\s*\d+',
-                # Percentage ranges (with parentheses for negative)
-                r'\(\s*\d+(?:\.\d+)?\s*\%\s*\)\s+to\s+\d+\s*\%',
-                # Percentage ranges (with minus sign for negative)
-                r'-\s*\d+(?:\.\d+)?\s*\%\s+to\s+\d+\s*\%',
-                # EPS ranges (with parentheses for negative)
-                r'\$\s*\(\s*\d+\.\d+\s*\)\s+to\s+\$\s*\d+\.\d+',
-                # EPS ranges (with minus sign for negative)
-                r'-\s*\$\s*\d+\.\d+\s+to\s+\$\s*\d+\.\d+',
-                # General numeric ranges (with parentheses for negative)
-                r'\(\s*\d+(?:\.\d+)?\s*\)(?:\s*[kmb]illion)?\s+to\s+\d+',
-                # General numeric ranges (with minus sign for negative)
-                r'-\s*\d+(?:\.\d+)?(?:\s*[kmb]illion)?\s+to\s+\d+',
-            ]
-            
-            # Check each pattern
-            is_mixed_range = False
-            for pattern in patterns:
-                if re.search(pattern, value_text, re.IGNORECASE):
-                    is_mixed_range = True
-                    fixed_count += 1
-                    break
-            
-            # If we found a mixed range pattern, fix the High value to be positive
-            if is_mixed_range:
-                # Make the High value positive
-                if isinstance(row['High'], str):
-                    if '%' in row['High']:
-                        fixed_df.at[idx, 'High'] = f"{abs(high_val):.1f}%"
-                    elif '$' in row['High']:
-                        if abs(high_val) >= 100:
-                            fixed_df.at[idx, 'High'] = f"${abs(high_val):.0f}"
-                        elif abs(high_val) >= 10:
-                            fixed_df.at[idx, 'High'] = f"${abs(high_val):.1f}"
-                        else:
-                            fixed_df.at[idx, 'High'] = f"${abs(high_val):.2f}"
-                    else:
-                        fixed_df.at[idx, 'High'] = f"{abs(high_val)}"
-                else:
-                    fixed_df.at[idx, 'High'] = abs(high_val)
-    
-    # Log if we fixed any issues
-    if fixed_count > 0:
-        st.write(f"✅ Fixed {fixed_count} mixed-sign ranges in the data")
-    
-    return fixed_df
-
 def extract_guidance(text, ticker, client, model_name):
     """
-    Enhanced function to extract guidance from SEC filings with improved handling of 
-    parenthetical negative values and other formats. Now requests period type classification.
+    Enhanced function to extract guidance from SEC filings.
+    Now directly extracting Low, High, and Average values from the language model.
     """
     prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
-Return a structured list containing:
+Return a structured table containing the following columns:
 - metric (e.g. Revenue, EPS, Operating Margin)
-- value or range (e.g. $1.5B–$1.6B or $2.05)
-- applicable period (e.g. Q3 FY24, Full Year 2025)
-- period type (MUST be either "Quarter" or "Full Year" based on the period text)
+- value_or_range (e.g. $1.5B–$1.6B or $2.05 or $(0.05) to $0.10 - EXACTLY as it appears in the text)
+- period (e.g. Q3 FY24, Full Year 2025)
+- period_type (MUST be either "Quarter" or "Full Year" based on the period text)
+- low (numeric low end of the range, or the single value if not a range)
+- high (numeric high end of the range, or the single value if not a range)
+- average (average of low and high, or just the value if not a range)
 
 VERY IMPORTANT:
 - Look for sections titled 'Outlook', 'Guidance', 'Financial Outlook', 'Business Outlook', or similar
 - Also look for statements containing phrases like "expect", "anticipate", "forecast", "will be", "to be in the range of"
 - Review the ENTIRE document for ANY forward-looking statements about future performance
 - Pay special attention to sections describing "For the fiscal quarter", "For the fiscal year", "For next quarter", etc.
-- For any percentage values, always include the % symbol in your output (e.g., "5% to 7%" or "5%-7%")
-- Be sure to capture year-over-year growth metrics as well as absolute values
-- Look for common financial metrics: Revenue, EPS, Operating Margin, Free Cash Flow, Gross Margin, etc.
-- Include both quarterly and full-year guidance if available
-- If guidance includes both GAAP and non-GAAP measures, include both with clear labels
+
+CRITICAL GUIDANCE FOR THE NUMERIC COLUMNS (low, high, average):
+- For low, high, and average columns, provide ONLY numeric values (no $ signs, no % symbols, no "million" or "billion" text)
+- Use negative numbers for negative values: -1 instead of "(1)" and -5 instead of "(5%)"
+- For mixed sign ranges like "$(1) million to $1 million", make sure low is negative (-1) and high is positive (1)
+- Convert all billions to millions (multiply by 1000): $1.2 billion → 1200
+- For percentages, just give the number without % sign: "5% to 7%" → low=5, high=7
+- For dollar amounts, omit the $ sign: "$0.05 to $0.10" → low=0.05, high=0.10
 
 FOR THE PERIOD TYPE COLUMN:
 - Classify each period as either "Quarter" or "Full Year" based on the applicable period
@@ -623,51 +175,11 @@ FOR THE PERIOD TYPE COLUMN:
 - If a period just mentions a year (e.g., "2023" or "FY24") without specifying a quarter, classify it as "Full Year"
 - THIS COLUMN IS REQUIRED AND MUST ONLY CONTAIN "Quarter" OR "Full Year" - NO OTHER VALUES
 
-CRITICAL: HANDLING POSITIVE AND NEGATIVE VALUES
-
-1. CORRECTLY HANDLE NEGATIVE VALUES:
-   - In financial reporting, values can be shown as negative in TWO ways:
-   - With a minus sign: "-$0.05" or "-5%"
-   - With parentheses: "($0.05)" or "(5%)" - THESE ARE ALWAYS NEGATIVE values
-   - Always maintain parenthetical notation when it appears in the original text
-   - Example: Value of "($0.05)" should be output as "($0.05)" (not "$0.05" or "-$0.05")
-   - Example: Value of "(5%)" should be output as "(5%)" (not "5%" or "-5%")
-
-2. CORRECTLY HANDLE POSITIVE VALUES:
-   - Do NOT add minus signs or parentheses to positive values
-   - Example: "$0.05" must be output as "$0.05" (not "-$0.05" or "($0.05)")
-   - Example: "5%" must be output as "5%" (not "-5%" or "(5%)")
-   - Only use minus signs or parentheses when the original text explicitly indicates a negative value
-
-3. CRITICAL HANDLING OF NUMERIC RANGES:
-   - ALWAYS include both the lower AND upper bounds in ranges, even when they differ by small amounts
-   - Example: "$181 million to $183 million" must be output as "$181 million to $183 million" (not just "$181 million")
-   - Example: "$181-$183 million" must be output as "$181-$183 million" (not just "$181 million")
-   - Example: "181-183" must be output as "181-183" (not just "181")
-   - For negative ranges, maintain consistent notation throughout the range:
-   - Example: "($0.08) to ($0.06)" should be output exactly as "($0.08) to ($0.06)"
-   - Example: "-$0.08 to -$0.06" should be output exactly as "-$0.08 to -$0.06"
-
-CRITICAL FORMATTING FOR BILLION VALUES:
-- When a value is expressed in billions (e.g., "$1.10 billion" or "$1.11B"), convert it to millions by multiplying by 1000:
-  - Example: "$1.10 billion" should be output as "$1,100 million"
-  - Example: "$1.11B" should be output as "$1,110 million"
-  - Example: A range of "$1.10-$1.11 billion" should be output as "$1,100-$1,110 million"
-  - Example: "$1.117 billion to $1.121 billion" should be output as "$1,117 million to $1,121 million"
-- IMPORTANT: Do NOT add extra zeros beyond multiplying by 1000. Just convert the exact number from billions to millions.
-- WRONG: "$1.117 billion" should NOT become "$1,117,000 million"
-- CORRECT: "$1.117 billion" should become "$1,117 million"
-- For ranges, convert each number individually: "$1.117-$1.121 billion" becomes "$1,117-$1,121 million"
-
-IMPORTANT FORMATTING INSTRUCTIONS:
-- For dollar ranges, use the format "$X to $Y" (with dollar sign before each number)
-  - Example: "$0.08 to $0.09" (not "$0.08-0.09")
-  - Example: "$181 million to $183 million" (not "$181-$183 million")
-- For percentage ranges, use the format "X% to Y%" (with % after each number)
-  - Example: "5% to 7%" (not "5-7%")
-- For other numeric ranges, use "X to Y" format
-  - Example: "100 to 110" (not "100-110")
-- Keep numbers exactly as stated (don't convert $0.08 to $0.8, etc.) EXCEPT for billion values which must be converted as instructed above
+FORMATTING INSTRUCTIONS FOR VALUE_OR_RANGE COLUMN:
+- Always preserve the original notation exactly as it appears in the document (maintain parentheses, $ signs, % symbols)
+- Example: If document says "($0.05) to $0.10", use exactly "($0.05) to $0.10" in value_or_range column
+- Example: If document says "(5%) to 2%", use exactly "(5%) to 2%" in value_or_range column
+- For billion values, keep them as billions in this column: "$1.10 billion to $1.11 billion"
 
 Respond in table format without commentary.\n\n{text}"""
     
@@ -1054,6 +566,41 @@ def find_guidance_paragraphs(text):
     
     return formatted_paragraphs, found_paragraphs
 
+def format_guidance_values(df):
+    """Format the numeric values to appropriate formats based on the metric and value types"""
+    # Make a copy to avoid modifying the original
+    formatted_df = df.copy()
+    
+    for idx, row in df.iterrows():
+        value_text = str(row.get('value_or_range', ''))
+        
+        # Determine if it's a percentage value
+        is_percentage = '%' in value_text
+        
+        # Determine if it's a dollar value
+        is_dollar = '$' in value_text
+        
+        # Format the Low, High, Average columns based on the value type
+        for col in ['low', 'high', 'average']:
+            if col in df.columns and not pd.isnull(row.get(col)):
+                try:
+                    val = float(row[col])
+                    
+                    if is_percentage:
+                        formatted_df.at[idx, col] = f"{val:.1f}%"
+                    elif is_dollar:
+                        if abs(val) >= 100:
+                            formatted_df.at[idx, col] = f"${val:.0f}"
+                        elif abs(val) >= 10:
+                            formatted_df.at[idx, col] = f"${val:.1f}"
+                        else:
+                            formatted_df.at[idx, col] = f"${val:.2f}"
+                except:
+                    # Skip if we can't parse as float
+                    continue
+    
+    return formatted_df
+
 if st.button("🔍 Extract Guidance"):
     if not api_key:
         st.error("Please enter your OpenAI API key.")
@@ -1123,86 +670,35 @@ if st.button("🔍 Extract Guidance"):
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         if len(rows) > 1:  # Check if we have header and at least one row of data
-                            # First, standardize the column names
-                            column_names = [c.strip() for c in rows[0]]
+                            # Standardize the column names
+                            column_names = [c.strip().lower().replace(' ', '_') for c in rows[0]]
                             
-                            # Create DataFrame with original column names
+                            # Create DataFrame with standardized column names
                             df = pd.DataFrame(rows[1:], columns=column_names)
                             
-                            # Find the value column - it might be called "Value" or "Value or range"
-                            value_column = None
-                            for col in df.columns:
-                                if "value" in col.lower():
-                                    value_column = col
-                                    break
+                            # Format the numeric columns to display appropriate symbols
+                            df = format_guidance_values(df)
                             
-                            # If no value column found, we have a problem
-                            if not value_column:
-                                st.warning("⚠️ No value column found in the extracted data.")
-                            else:
-                                # Save the original values for later
-                                original_values = df[value_column].copy()
-                                
-                                # Rename the value column to "Value" for consistent processing
-                                if value_column != "Value":
-                                    df.rename(columns={value_column: "Value"}, inplace=True)
-                                
-                                # Store which rows have percentages or parenthetical values in the Value column
-                                percentage_rows = []
-                                parenthetical_rows = []
-                                for idx, row in df.iterrows():
-                                    val_text = str(row.get('Value', ''))
-                                    if '%' in val_text:
-                                        percentage_rows.append(idx)
-                                    if '(' in val_text and ')' in val_text:
-                                        parenthetical_rows.append(idx)
-                                
-                                # Parse low, high, and average from Value column
-                                df[['Low','High','Average']] = df['Value'].apply(lambda v: pd.Series(parse_value_range(v)))
-                                
-                                # Apply special corrections for parenthetical values
-                                for idx in parenthetical_rows:
-                                    for col in ['Low', 'High', 'Average']:
-                                        if col in df.columns and not pd.isnull(df.loc[idx, col]):
-                                            val = df.loc[idx, col]
-                                            if isinstance(val, (int, float)) and val > 0:
-                                                df.at[idx, col] = -abs(val)
-                                
-                                # Apply comprehensive sign correction based on context
-                                df = correct_value_signs(df)
-                                
-                                # Apply GAAP/non-GAAP split
-                                df = split_gaap_non_gaap(df)
-                                
-                                # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                                for idx in percentage_rows:
-                                    # Add % to Low, High, Average columns
-                                    for col in ['Low', 'High', 'Average']:
-                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                            df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                                
-                                # We're using the simplified check_range_consistency function
-                                # that doesn't change any values
-                                df = check_range_consistency(df)
-                                
-                                # Apply the post-processing to fix mixed-sign ranges
-                                df = post_process_ranges(df)
-                                
-                                # Apply metric standardization (only changes the Metric column)
-                                df = standardize_metrics(df)
-                                
-                                # Now rename the "Value" column back to "Value or range" and restore original values
-                                if "Value" in df.columns:
-                                    df.rename(columns={"Value": "Value or range"}, inplace=True)
-                                    # Restore the original values
-                                    df["Value or range"] = original_values
-                                
-                                # Add metadata columns
-                                df["FilingDate"] = date_str
-                                df["8K_Link"] = url
-                                df["Model_Used"] = selected_model
-                                results.append(df)
-                                st.success("✅ Guidance extracted from this 8-K.")
+                            # Apply GAAP/non-GAAP split
+                            if 'value_or_range' in df.columns:
+                                df = split_gaap_non_gaap(df.rename(columns={'value_or_range': 'Value or range'}))
+                                # Rename back to standard naming
+                                if 'Value or range' in df.columns:
+                                    df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
+                            
+                            # Apply metric standardization
+                            if 'metric' in df.columns:
+                                df = standardize_metrics(df.rename(columns={'metric': 'Metric'}))
+                                # Rename back to standard naming
+                                if 'Metric' in df.columns:
+                                    df.rename(columns={'Metric': 'metric'}, inplace=True)
+                            
+                            # Add metadata columns
+                            df["filing_date"] = date_str
+                            df["filing_url"] = url
+                            df["model_used"] = selected_model
+                            results.append(df)
+                            st.success("✅ Guidance extracted from this 8-K.")
                         else:
                             st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
                             
@@ -1210,4 +706,55 @@ if st.button("🔍 Extract Guidance"):
                             st.write("Sample of text sent to OpenAI:")
                             sample_length = min(500, len(guidance_paragraphs))
                             st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
-                    else
+                    else:
+                        st.warning(f"⚠️ No guidance table found in {url}")
+                        
+                        # Show a sample of the text to help debug
+                        st.write("Sample of text sent to OpenAI:")
+                        sample_length = min(500, len(guidance_paragraphs))
+                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                except Exception as e:
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
+
+            if results:
+                # Combine all results
+                combined = pd.concat(results, ignore_index=True)
+                
+                # Display human-friendly column names
+                display_rename = {
+                    'metric': 'Metric',
+                    'value_or_range': 'Value or Range',
+                    'period': 'Period', 
+                    'period_type': 'Period Type',
+                    'low': 'Low',
+                    'high': 'High', 
+                    'average': 'Average',
+                    'filing_date': 'Filing Date',
+                    'filing_url': 'Filing URL', 
+                    'model_used': 'Model Used'
+                }
+                
+                # Preview the table
+                st.subheader("🔍 Preview of Extracted Guidance")
+                
+                # Select the most relevant columns for display
+                display_cols = ['metric', 'value_or_range', 'period', 'period_type', 'low', 'high', 'average', 'filing_date']
+                display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
+                
+                # Rename columns for display
+                display_df = display_df.rename(columns={c: display_rename.get(c, c) for c in display_df.columns})
+                
+                # Display the table with formatting
+                st.dataframe(display_df, use_container_width=True)
+                
+                # Add download button
+                import io
+                excel_buffer = io.BytesIO()
+                
+                # Rename columns for Excel export
+                excel_df = combined.rename(columns={c: display_rename.get(c, c) for c in combined.columns})
+                excel_df.to_excel(excel_buffer, index=False)
+                
+                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("No guidance data extracted.")
