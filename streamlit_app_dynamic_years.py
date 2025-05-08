@@ -87,70 +87,90 @@ Respond in table format without commentary.\n\n{text}"""
 
 def standardize_metrics_with_gpt(df, client, model_name):
     """
-    Use GPT to standardize metric names according to financial reporting conventions.
+    Standardize metric names to follow consistent financial reporting conventions.
     """
     if 'metric' not in df.columns or df.empty:
         return df
     
-    # Create a list of unique metrics for GPT to standardize
-    unique_metrics = df['metric'].unique().tolist()
+    # Create a deep copy to avoid modifying the original
+    df = df.copy()
     
-    prompt = """You are a financial reporting standards expert. Standardize the following financial metric names according to proper GAAP and non-GAAP naming conventions. 
-
-For each metric:
-1. Remove any parenthetical phrases like "(loss)" or "(income)"
-2. Use proper capitalization (e.g., "GAAP", "Non-GAAP", "EPS", "EBITDA")
-3. Standardize terminology (e.g., "Operating Income" not "Operating Profit")
-4. Ensure consistency (e.g., "GAAP Net Income" not "Net Income GAAP")
-
-Follow these specific standards:
-- Revenue metrics: "Revenue", "Organic Revenue", etc.
-- Income metrics: "GAAP Operating Income", "Non-GAAP Operating Income", "GAAP Net Income", "Non-GAAP Net Income"
-- Margin metrics: "Gross Margin", "GAAP Operating Margin", "Non-GAAP Operating Margin"
-- EPS metrics: "GAAP EPS", "Non-GAAP EPS", "Diluted EPS"
-- Other common metrics: "Adj. EBITDA", "Free Cash Flow", etc.
-
-Here are the metrics to standardize. For each one, respond with the standardized version:
-
-"""
+    # First remove any parenthetical phrases like "(loss)" or "(income)"
+    df['metric'] = df['metric'].str.replace(r'\s*\([^)]*\)\s*', ' ', regex=True)
     
-    # Create a list of metrics for GPT to standardize
-    metrics_list = "\n".join([f"- {metric}" for metric in unique_metrics])
-    full_prompt = prompt + metrics_list
+    # Capitalize important words and standardize terms
+    def capitalize_metric(metric):
+        # Handle special cases
+        if 'gaap' in metric.lower():
+            metric = metric.replace('gaap', 'GAAP')
+            metric = metric.replace('GAAP', 'GAAP')  # Fix any double capitalization
+            
+        if 'non-gaap' in metric.lower():
+            metric = metric.replace('non-gaap', 'Non-GAAP')
+            metric = metric.replace('Non-GAAP', 'Non-GAAP')  # Fix any double capitalization
+            
+        if 'eps' in metric.lower():
+            metric = metric.replace('eps', 'EPS')
+            
+        if 'ebitda' in metric.lower():
+            metric = metric.replace('ebitda', 'EBITDA')
+            
+        # Capitalize first letter of each word
+        words = metric.split()
+        capitalized = []
+        for word in words:
+            # Don't change already capitalized words like GAAP, EPS, etc.
+            if word.upper() == word or word.lower() in ['of', 'the', 'and', 'or', 'in', 'on', 'at', 'for', 'to']:
+                capitalized.append(word)
+            else:
+                capitalized.append(word.capitalize())
+                
+        return ' '.join(capitalized)
     
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": full_prompt}],
-            temperature=0.3,
-        )
+    df['metric'] = df['metric'].apply(capitalize_metric)
+    
+    # Ensure consistent naming for common metrics
+    replacements = {
+        # Specific case you mentioned
+        'Non-GAAP Operating (loss) Income': 'Non-GAAP Operating Income',
+        'Non-GAAP Operating Loss Income': 'Non-GAAP Operating Income',
+        'Non-GAAP Operating Loss': 'Non-GAAP Operating Income',
         
-        # Parse the response to get standardized metric names
-        standardized_metrics = {}
-        response_lines = response.choices[0].message.content.strip().split('\n')
+        # Other variations with loss/income
+        'GAAP Operating Loss': 'GAAP Operating Income',
+        'GAAP Operating (loss) Income': 'GAAP Operating Income',
+        'Non-GAAP Net Loss': 'Non-GAAP Net Income',
+        'Non-GAAP Net (loss) Income': 'Non-GAAP Net Income',
+        'GAAP Net Loss': 'GAAP Net Income',
+        'GAAP Net (loss) Income': 'GAAP Net Income',
         
-        for line in response_lines:
-            if '-' in line and ':' in line:
-                parts = line.split(':', 1)
-                original = parts[0].strip().replace('- ', '')
-                standardized = parts[1].strip()
-                standardized_metrics[original] = standardized
+        # EPS standardization
+        'Loss Per Share': 'EPS',
+        'Income Per Share': 'EPS',
+        'Earnings Per Share': 'EPS',
+        'Non-GAAP Loss Per Share': 'Non-GAAP EPS',
+        'GAAP Loss Per Share': 'GAAP EPS',
         
-        # Handle cases where GPT didn't follow the exact format
-        for metric in unique_metrics:
-            if metric not in standardized_metrics:
-                # Look for a line that contains this metric
-                for line in response_lines:
-                    if metric in line and ':' in line:
-                        parts = line.split(':', 1)
-                        standardized = parts[1].strip()
-                        standardized_metrics[metric] = standardized
-                        break
+        # Other terminology standardization
+        'Operating Profit': 'Operating Income',
+        'Net Profit': 'Net Income',
+        'Diluted Loss Per Share': 'Diluted EPS',
+        'Diluted Earnings Per Share': 'Diluted EPS',
         
-        # Apply standardization to the DataFrame
-        df['metric'] = df['metric'].apply(lambda x: standardized_metrics.get(x, x))
-        
-        return df
+        # Margins standardization
+        'Operating Margin Loss': 'Operating Margin',
+        'GAAP Operating Margin Loss': 'GAAP Operating Margin',
+        'Non-GAAP Operating Margin Loss': 'Non-GAAP Operating Margin',
+    }
+    
+    # Apply all replacements (case-insensitive)
+    for old, new in replacements.items():
+        df['metric'] = df['metric'].str.replace(old, new, case=False, regex=False)
+    
+    # Clean up any double spaces
+    df['metric'] = df['metric'].str.replace(r'\s+', ' ', regex=True).str.strip()
+    
+    return df
     
     except Exception as e:
         st.warning(f"⚠️ Error standardizing metrics: {str(e)}")
