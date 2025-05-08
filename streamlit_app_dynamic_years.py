@@ -1069,63 +1069,82 @@ if st.button("🔍 Extract Guidance"):
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                         if len(rows) > 1:  # Check if we have header and at least one row of data
-                            df = pd.DataFrame(rows[1:], columns=[c.strip() for c in rows[0]])
+                            # First, standardize the column names
+                            column_names = [c.strip() for c in rows[0]]
                             
-                            # Save the original Value column to restore later
-                            original_values = df['Value'].copy() if 'Value' in df.columns else None
+                            # Create DataFrame with original column names
+                            df = pd.DataFrame(rows[1:], columns=column_names)
                             
-                            # Store which rows have percentages or parenthetical values in the Value column
-                            percentage_rows = []
-                            parenthetical_rows = []
-                            for idx, row in df.iterrows():
-                                value_col = df.columns[1]  # Usually "Value"
-                                val_text = str(row[value_col])
-                                if '%' in val_text:
-                                    percentage_rows.append(idx)
-                                if '(' in val_text and ')' in val_text:
-                                    parenthetical_rows.append(idx)
+                            # Find the value column - it might be called "Value" or "Value or range"
+                            value_column = None
+                            for col in df.columns:
+                                if "value" in col.lower():
+                                    value_column = col
+                                    break
                             
-                            # Parse low, high, and average from Value column
-                            value_col = df.columns[1]
-                            df[['Low','High','Average']] = df[value_col].apply(lambda v: pd.Series(parse_value_range(v)))
-                            
-                            # Apply special corrections for parenthetical values
-                            for idx in parenthetical_rows:
-                                for col in ['Low', 'High', 'Average']:
-                                    if col in df.columns and not pd.isnull(df.loc[idx, col]):
-                                        val = df.loc[idx, col]
-                                        if isinstance(val, (int, float)) and val > 0:
-                                            df.at[idx, col] = -abs(val)
-                            
-                            # Apply comprehensive sign correction based on context
-                            df = correct_value_signs(df)
-                            
-                            # Apply GAAP/non-GAAP split
-                            df = split_gaap_non_gaap(df)
-                            
-                            # For rows that originally had % in the Value column, make sure Low, High, Average have % too
-                            for idx in percentage_rows:
-                                # Add % to Low, High, Average columns
-                                for col in ['Low', 'High', 'Average']:
-                                    if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
-                                        df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
-                            
-                            # Apply a final consistency check to fix any remaining issues with negative ranges
-                            df = check_range_consistency(df)
-                            
-                            # Apply metric standardization (only changes the Metric column)
-                            df = standardize_metrics(df)
-                            
-                            # Restore the original Value column
-                            if original_values is not None:
-                                df['Value'] = original_values
-                            
-                            # Add metadata columns
-                            df["FilingDate"] = date_str
-                            df["8K_Link"] = url
-                            df["Model_Used"] = selected_model
-                            results.append(df)
-                            st.success("✅ Guidance extracted from this 8-K.")
+                            # If no value column found, we have a problem
+                            if not value_column:
+                                st.warning("⚠️ No value column found in the extracted data.")
+                            else:
+                                # Save the original values for later
+                                original_values = df[value_column].copy()
+                                
+                                # Rename the value column to "Value" for consistent processing
+                                if value_column != "Value":
+                                    df.rename(columns={value_column: "Value"}, inplace=True)
+                                
+                                # Store which rows have percentages or parenthetical values in the Value column
+                                percentage_rows = []
+                                parenthetical_rows = []
+                                for idx, row in df.iterrows():
+                                    val_text = str(row.get('Value', ''))
+                                    if '%' in val_text:
+                                        percentage_rows.append(idx)
+                                    if '(' in val_text and ')' in val_text:
+                                        parenthetical_rows.append(idx)
+                                
+                                # Parse low, high, and average from Value column
+                                df[['Low','High','Average']] = df['Value'].apply(lambda v: pd.Series(parse_value_range(v)))
+                                
+                                # Apply special corrections for parenthetical values
+                                for idx in parenthetical_rows:
+                                    for col in ['Low', 'High', 'Average']:
+                                        if col in df.columns and not pd.isnull(df.loc[idx, col]):
+                                            val = df.loc[idx, col]
+                                            if isinstance(val, (int, float)) and val > 0:
+                                                df.at[idx, col] = -abs(val)
+                                
+                                # Apply comprehensive sign correction based on context
+                                df = correct_value_signs(df)
+                                
+                                # Apply GAAP/non-GAAP split
+                                df = split_gaap_non_gaap(df)
+                                
+                                # For rows that originally had % in the Value column, make sure Low, High, Average have % too
+                                for idx in percentage_rows:
+                                    # Add % to Low, High, Average columns
+                                    for col in ['Low', 'High', 'Average']:
+                                        if pd.notnull(df.loc[idx, col]) and isinstance(df.loc[idx, col], (int, float)):
+                                            df.at[idx, col] = f"{df.loc[idx, col]:.1f}%"
+                                
+                                # Apply a final consistency check to fix any remaining issues with negative ranges
+                                df = check_range_consistency(df)
+                                
+                                # Apply metric standardization (only changes the Metric column)
+                                df = standardize_metrics(df)
+                                
+                                # Now rename the "Value" column back to "Value or range" and restore original values
+                                if "Value" in df.columns:
+                                    df.rename(columns={"Value": "Value or range"}, inplace=True)
+                                    # Restore the original values
+                                    df["Value or range"] = original_values
+                                
+                                # Add metadata columns
+                                df["FilingDate"] = date_str
+                                df["8K_Link"] = url
+                                df["Model_Used"] = selected_model
+                                results.append(df)
+                                st.success("✅ Guidance extracted from this 8-K.")
                         else:
                             st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
                             
@@ -1149,18 +1168,16 @@ if st.button("🔍 Extract Guidance"):
                 
                 # Define the order of columns without removing any existing columns
                 primary_columns = [
-                    "Metric", "Value", "Period", "PeriodType", 
+                    "Metric", "Value or range", "Period", "PeriodType", 
                     "Low", "High", "Average", "FilingDate", 
                     "8K_Link", "Model_Used"
                 ]
-                
-               
                 
                 # Preview the table
                 st.subheader("🔍 Preview of Extracted Guidance")
                 
                 # Select the most relevant columns for display
-                display_cols = ["Metric", "Value", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
+                display_cols = ["Metric", "Value or range", "Period", "PeriodType", "Low", "High", "Average", "FilingDate"]
                 display_df = combined[display_cols] if all(col in combined.columns for col in display_cols) else combined
                 
                 # Apply custom formatting when displaying
@@ -1169,19 +1186,17 @@ if st.button("🔍 Extract Guidance"):
                     if col in display_df.columns:
                         display_df[col] = display_df[col].apply(
                             lambda x: (format_percent(x) if isinstance(x, (int, float)) and 
-                                      any('%' in str(row.get('Value', '')) for _, row in display_df.iterrows()) 
+                                      any('%' in str(row.get('Value or range', '')) for _, row in display_df.iterrows()) 
                                       else format_dollar(x) if isinstance(x, (int, float)) and 
-                                      any('$' in str(row.get('Value', '')) for _, row in display_df.iterrows())
-                                      else x)
-                        )
-                
+                                      any('$' in str(row.get('Value or range', '')) for _, row in display_df.iterrows())
+
                 # Display the table with formatting
-                st.dataframe(display_df, use_container_width=True)
-                
-                # Add download button
-                import io
-                excel_buffer = io.BytesIO()
-                combined.to_excel(excel_buffer, index=False)
-                st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            else:
-                st.warning("No guidance data extracted.")
+               st.dataframe(display_df, use_container_width=True)
+               
+               # Add download button
+               import io
+               excel_buffer = io.BytesIO()
+               combined.to_excel(excel_buffer, index=False)
+               st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+           else:
+               st.warning("No guidance data extracted.")
