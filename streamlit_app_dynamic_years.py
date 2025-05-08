@@ -112,10 +112,23 @@ For each metric below, respond with ONLY the fixed version after applying all st
         for original, fixed in zip(unique_metrics, processed_lines):
             fixed_metrics[original] = fixed
     
-    # Apply fixes to the dataframe
-    df['metric'] = df['metric'].apply(lambda x: fixed_metrics.get(x, x))
+    # Create a copy of the dataframe to avoid modifying the original during iteration
+    processed_df = df.copy()
     
-    return df
+    # Apply fixes selectively based on the period_type
+    for idx, row in processed_df.iterrows():
+        original_metric = row['metric']
+        fixed_metric = fixed_metrics.get(original_metric, original_metric)
+        
+        # Only apply "Revenue" standardization if Period Type is not blank
+        if fixed_metric == 'Revenue' and ('period_type' in df.columns) and (pd.isna(row['period_type']) or row['period_type'] == ''):
+            # Keep original metric name if Period Type is blank
+            processed_df.loc[idx, 'metric'] = original_metric
+        else:
+            # Otherwise use the fixed metric name
+            processed_df.loc[idx, 'metric'] = fixed_metric
+    
+    return processed_df
     
 def extract_guidance(text, ticker, client, model_name):
     """
