@@ -47,32 +47,23 @@ def fix_metrics_with_gpt(df, client, model_name):
     # Get unique metric-period_type pairs to reduce API calls
     unique_metric_pairs = list(set(metric_list))
     
-    # Create a clearer, more structured prompt for GPT
-    prompt = """Fix these financial metric names following these precise standardization rules:
+    # Create a clearer prompt that explicitly addresses the EPS issue with attributions
+    prompt = """Fix these financial metric names following these EXACT rules in order:
 
-RULES TO APPLY IN THIS EXACT ORDER:
+1. CRITICAL: If a metric contains "per share" AND "net income", convert it IMMEDIATELY:
+   - "Non-GAAP Net Income per Share" (including any with "attributable to...") → "Non-GAAP EPS"
+   - "Adjusted Net Income per Share" (including any with "attributable to...") → "Non-GAAP EPS"
+   - "GAAP Net Income per Share" (including any with "attributable to...") → "GAAP EPS"
+   - Example: "Non-GAAP net income per share attributable to Blackline" MUST become "Non-GAAP EPS"
+   - Keep "Free Cash Flow per Share" as is
 
-1. REMOVE ATTRIBUTIONS:
-   - Remove any phrases like "attributable to [Company]" or "attributable to common stockholders"
+2. REMOVE ATTRIBUTIONS (for metrics not already handled by rule 1):
+   - Remove phrases like "attributable to [Company]" or "attributable to common stockholders"
    - Example: "GAAP Net Income attributable to BlackLine" → "GAAP Net Income"
-   - Example: "Non-GAAP net income per share attributable to Blackline" → "Non-GAAP net income per share"
-   - PLEASE NOTE if "Net Income per share attributable to BlackLine", you need to realize that net income per share refers to EPS
-
-2. PER SHARE METRICS:
-   - ANY metric containing BOTH "net income" AND "per share" (in any capitalization) should be standardized:
-     * If it contains "Non-GAAP" or "Adjusted" → change to "Non-GAAP EPS"
-     * If it contains "GAAP" → change to "GAAP EPS"
-   - Examples:
-     * "Non-GAAP net income per share" → "Non-GAAP EPS"
-     * "Adjusted Net Income per Share" → "Non-GAAP EPS" 
-     * "GAAP Net Income per Share" → "GAAP EPS"
-     * "Non-GAAP Net Income per Share attributable to BlackLine" → "Non-GAAP EPS"
-   - Exception: Keep "Free Cash Flow per Share" unchanged
+   - Example: "Non-GAAP Operating Income attributable to BlackLine" → "Non-GAAP Operating Income"
 
 3. ADJUSTED METRICS:
-   - Change "Adjusted" to "Non-GAAP" EXCEPT for:
-     * "Adjusted EBITDA" (keep as is)
-     * "Adjusted EBITDA Margin" (keep as is)
+   - Change "Adjusted" to "Non-GAAP" except for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
    - Example: "Adjusted Net Income" → "Non-GAAP Net Income"
 
 4. REVENUE METRICS:
@@ -82,11 +73,16 @@ RULES TO APPLY IN THIS EXACT ORDER:
    - If period_type is blank, ALWAYS keep the original metric name
 
 I'll give you a list of metrics with their period_type in this format: "Metric | Period Type"
-For each item, respond with ONLY the fixed metric name following ALL the rules above.
+For each item, respond with ONLY the fixed metric name following ALL rules above.
 
 """
     
-    # Add metrics to the prompt
+    # Add metrics to the prompt with clear examples of problem cases
+    prompt += "Here are specific examples of the problem cases that MUST be fixed correctly:\n"
+    prompt += "- \"Non-GAAP net income per share attributable to Blackline\" MUST become \"Non-GAAP EPS\"\n"
+    prompt += "- \"GAAP Net income per share attributable to BlackLine, Inc.\" MUST become \"GAAP EPS\"\n\n"
+    
+    # Add the actual metrics to process
     for i, (metric, period_type) in enumerate(unique_metric_pairs):
         prompt += f"{i+1}. {metric} | {period_type}\n"
         
