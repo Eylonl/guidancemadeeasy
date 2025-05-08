@@ -29,63 +29,7 @@ def format_dollar(val):
             return f"${val:.2f}"
     return val
 
-def extract_guidance(text, ticker, client, model_name):
-    """
-    Enhanced function to extract guidance from SEC filings.
-    Now directly extracting Low, High, and Average values from the language model.
-    """
-    prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
-
-Return a structured table containing the following columns:
-- metric (e.g. Revenue, EPS, Operating Margin)
-- value_or_range (e.g. $1.5B–$1.6B or $2.05 or $(0.05) to $0.10 - EXACTLY as it appears in the text)
-- period (e.g. Q3 FY24, Full Year 2025)
-- period_type (MUST be either "Quarter" or "Full Year" based on the period text)
-- low (numeric low end of the range, or the single value if not a range)
-- high (numeric high end of the range, or the single value if not a range)
-- average (average of low and high, or just the value if not a range)
-
-VERY IMPORTANT:
-- Look for sections titled 'Outlook', 'Guidance', 'Financial Outlook', 'Business Outlook', or similar
-- Also look for statements containing phrases like "expect", "anticipate", "forecast", "will be", "to be in the range of"
-- Review the ENTIRE document for ANY forward-looking statements about future performance
-- Pay special attention to sections describing "For the fiscal quarter", "For the fiscal year", "For next quarter", etc.
-
-CRITICAL GUIDANCE FOR THE NUMERIC COLUMNS (low, high, average):
-- For low, high, and average columns, provide ONLY numeric values (no $ signs, no % symbols, no "million" or "billion" text)
-- Use negative numbers for negative values: -1 instead of "(1)" and -5 instead of "(5%)"
-- For mixed sign ranges like "$(1) million to $1 million", make sure low is negative (-1) and high is positive (1)
-- Convert all billions to millions (multiply by 1000): $1.2 billion → 1200
-- For percentages, just give the number without % sign: "5% to 7%" → low=5, high=7
-- For dollar amounts, omit the $ sign: "$0.05 to $0.10" → low=0.05, high=0.10
-
-FOR THE PERIOD TYPE COLUMN:
-- Classify each period as either "Quarter" or "Full Year" based on the applicable period
-- Use "Quarter" for: Q1, Q2, Q3, Q4, First Quarter, Next Quarter, Current Quarter, etc.
-- Use "Full Year" for: Full Year, Fiscal Year, FY, Annual, Year Ending, etc.
-- If a period just mentions a year (e.g., "2023" or "FY24") without specifying a quarter, classify it as "Full Year"
-- THIS COLUMN IS REQUIRED AND MUST ONLY CONTAIN "Quarter" OR "Full Year" - NO OTHER VALUES
-
-FORMATTING INSTRUCTIONS FOR VALUE_OR_RANGE COLUMN:
-- Always preserve the original notation exactly as it appears in the document (maintain parentheses, $ signs, % symbols)
-- Example: If document says "($0.05) to $0.10", use exactly "($0.05) to $0.10" in value_or_range column
-- Example: If document says "(5%) to 2%", use exactly "(5%) to 2%" in value_or_range column
-- For billion values, keep them as billions in this column: "$1.10 billion to $1.11 billion"
-
-Respond in table format without commentary.\n\n{text}"""
-    
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
-        return None
-
-def standardize_metrics_with_gpt(df, client, model_name):
+def standardize_metrics(df):
     """
     Standardize metric names to follow consistent financial reporting conventions.
     """
@@ -171,10 +115,62 @@ def standardize_metrics_with_gpt(df, client, model_name):
     df['metric'] = df['metric'].str.replace(r'\s+', ' ', regex=True).str.strip()
     
     return df
+
+def extract_guidance(text, ticker, client, model_name):
+    """
+    Enhanced function to extract guidance from SEC filings.
+    Now directly extracting Low, High, and Average values from the language model.
+    """
+    prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
+
+Return a structured table containing the following columns:
+- metric (e.g. Revenue, EPS, Operating Margin)
+- value_or_range (e.g. $1.5B–$1.6B or $2.05 or $(0.05) to $0.10 - EXACTLY as it appears in the text)
+- period (e.g. Q3 FY24, Full Year 2025)
+- period_type (MUST be either "Quarter" or "Full Year" based on the period text)
+- low (numeric low end of the range, or the single value if not a range)
+- high (numeric high end of the range, or the single value if not a range)
+- average (average of low and high, or just the value if not a range)
+
+VERY IMPORTANT:
+- Look for sections titled 'Outlook', 'Guidance', 'Financial Outlook', 'Business Outlook', or similar
+- Also look for statements containing phrases like "expect", "anticipate", "forecast", "will be", "to be in the range of"
+- Review the ENTIRE document for ANY forward-looking statements about future performance
+- Pay special attention to sections describing "For the fiscal quarter", "For the fiscal year", "For next quarter", etc.
+
+CRITICAL GUIDANCE FOR THE NUMERIC COLUMNS (low, high, average):
+- For low, high, and average columns, provide ONLY numeric values (no $ signs, no % symbols, no "million" or "billion" text)
+- Use negative numbers for negative values: -1 instead of "(1)" and -5 instead of "(5%)"
+- For mixed sign ranges like "$(1) million to $1 million", make sure low is negative (-1) and high is positive (1)
+- Convert all billions to millions (multiply by 1000): $1.2 billion → 1200
+- For percentages, just give the number without % sign: "5% to 7%" → low=5, high=7
+- For dollar amounts, omit the $ sign: "$0.05 to $0.10" → low=0.05, high=0.10
+
+FOR THE PERIOD TYPE COLUMN:
+- Classify each period as either "Quarter" or "Full Year" based on the applicable period
+- Use "Quarter" for: Q1, Q2, Q3, Q4, First Quarter, Next Quarter, Current Quarter, etc.
+- Use "Full Year" for: Full Year, Fiscal Year, FY, Annual, Year Ending, etc.
+- If a period just mentions a year (e.g., "2023" or "FY24") without specifying a quarter, classify it as "Full Year"
+- THIS COLUMN IS REQUIRED AND MUST ONLY CONTAIN "Quarter" OR "Full Year" - NO OTHER VALUES
+
+FORMATTING INSTRUCTIONS FOR VALUE_OR_RANGE COLUMN:
+- Always preserve the original notation exactly as it appears in the document (maintain parentheses, $ signs, % symbols)
+- Example: If document says "($0.05) to $0.10", use exactly "($0.05) to $0.10" in value_or_range column
+- Example: If document says "(5%) to 2%", use exactly "(5%) to 2%" in value_or_range column
+- For billion values, keep them as billions in this column: "$1.10 billion to $1.11 billion"
+
+Respond in table format without commentary.\n\n{text}"""
     
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        st.warning(f"⚠️ Error standardizing metrics: {str(e)}")
-        return df  # Return original dataframe if there's an error
+        st.warning(f"⚠️ Error extracting guidance: {str(e)}")
+        return None
 
 def split_gaap_non_gaap(df):
     """Split rows that contain both GAAP and non-GAAP guidance into separate rows"""
@@ -689,8 +685,8 @@ if st.button("🔍 Extract Guidance"):
                                 if 'Value or range' in df.columns:
                                     df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
                             
-                            # Use GPT to standardize metric names
-                            df = standardize_metrics_with_gpt(df, client, model_id)
+                            # Use the standardize_metrics function (no longer using GPT for this)
+                            df = standardize_metrics(df)
                             
                             # Add metadata columns
                             df["filing_date"] = date_str
