@@ -40,48 +40,51 @@ def fix_metrics_with_gpt(df, client, model_name):
     unique_metrics = df['metric'].unique().tolist()
     
     # Create a clear prompt for GPT with simple standardization rules
-    prompt = """Fix these financial metric names following these rules.
+    prompt = """Fix these financial metric names by applying these rules in exact order:
 
-KEY RULES:
-1. Always use proper capitalization for acronyms: "Non-GAAP", "GAAP", "EPS", "EBITDA", etc.
+STEP 1: IDENTIFY CORE METRIC TYPE
+- First, determine if the metric is:
+  * A per share metric (contains "per share")
+  * A revenue metric (contains "revenue")
+  * A net income metric (contains "net income")
+  * An EBITDA metric (contains "EBITDA")
+  * Another metric type
 
-2. REMOVE ATTRIBUTIONS:
-   - Remove any phrases like "attributable to [Company Name]" or "attributable to common stockholders"
-   - Examples:
-     - "Non-GAAP Net Income per Share attributable to BlackLine" → "Non-GAAP EPS"
-     - "GAAP Net Income attributable to Microsoft" → "GAAP Net Income"
+STEP 2: REMOVE ATTRIBUTIONS
+- Remove ONLY the attribution phrase (not other parts of the metric name)
+- For example: "Non-GAAP Net Income per Share attributable to BlackRock" 
+  * KEEP: "Non-GAAP Net Income per Share" 
+  * REMOVE: "attributable to BlackRock"
+- Common attribution phrases to remove:
+  * "attributable to [Company Name]"
+  * "attributable to common stockholders"
 
-3. REVENUE METRICS:
-   - ALL revenue metrics should be standardized to just "Revenue"
-   - This includes "GAAP Revenue", "Non-GAAP Revenue", "Adjusted Revenue", etc.
-   - ALL become simply "Revenue"
+STEP 3: STANDARDIZE METRIC NAMES
+- For earnings per share metrics:
+  * "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
+  * "Adjusted Net Income per Share" → "Non-GAAP EPS"
+  * "GAAP Net Income per Share" → "GAAP EPS"
+- For revenue metrics:
+  * ALL revenue metrics become simply "Revenue"
+- For adjusted metrics:
+  * Replace "Adjusted" with "Non-GAAP" EXCEPT for "Adjusted EBITDA" and "Adjusted EBITDA Margin"
+- DO NOT CHANGE "Free Cash Flow per Share" or other non-earnings per share metrics
 
-4. PER SHARE METRICS:
-   - ANY metric with "Net Income per Share" or similar earnings per share phrasing becomes an EPS-type metric
-   - "Non-GAAP Net Income per Share" → "Non-GAAP EPS"
-   - "Adjusted Net Income per Share" → "Non-GAAP EPS"
-   - "GAAP Net Income per Share" → "GAAP EPS"
-   - DO NOT CHANGE "Free Cash Flow per Share" - keep it as is
-   - DO NOT CHANGE other per share metrics that aren't earnings metrics
+EXAMPLES OF COMPLETE TRANSFORMATIONS:
+- "Non-GAAP Net Income attributable to BlackLine" → "Non-GAAP Net Income"
+- "Non-GAAP Net Income per Share attributable to BlackLine" → "Non-GAAP EPS"
+- "Adjusted Net Income per Share attributable to common stockholders" → "Non-GAAP EPS"
+- "GAAP Revenue attributable to BlackRock" → "Revenue"
+- "Adjusted Revenue" → "Revenue"
+- "Free Cash Flow per Share attributable to Shareholders" → "Free Cash Flow per Share"
 
-5. ADJUSTED METRICS:
-   - Replace "Adjusted" with "Non-GAAP" for all metrics EXCEPT:
-     - Keep "Adjusted EBITDA" as is
-     - Keep "Adjusted EBITDA Margin" as is
-   - Examples:
-     - "Adjusted Net Income" → "Non-GAAP Net Income"
-     - "Adjusted Operating Income" → "Non-GAAP Operating Income"
-
-CRITICAL INSTRUCTION: If a metric has "Net Income per Share" or similar earnings per share phrasing, it MUST be classified as "EPS" not as "Net Income".
-
-For each metric below, respond in the exact format:
-- Original: Fixed version
+For each metric below, respond with ONLY the fixed version after applying all steps above:
 
 """
     
     # Add metrics to the prompt
-    for metric in unique_metrics:
-        prompt += f"{metric}\n"
+    for i, metric in enumerate(unique_metrics):
+        prompt += f"{i+1}. {metric}\n"
         
     # Ask GPT to fix the metrics
     response = client.chat.completions.create(
@@ -90,29 +93,23 @@ For each metric below, respond in the exact format:
         temperature=0.0,
     )
     
-    # Parse the response
+    # Process the response - simple line-by-line parsing
     fixed_metrics = {}
     lines = response.choices[0].message.content.strip().split('\n')
     
+    # Clean up each line and match with original metrics
+    processed_lines = []
     for line in lines:
-        # Look for various formats of responses
-        if ':' in line:
-            # Handle format like "Original: Fixed"
-            parts = line.split(':', 1)
-            original = parts[0].strip().replace('- ', '')
-            fixed = parts[1].strip()
-            fixed_metrics[original] = fixed
-        elif '→' in line:
-            # Handle format like "Original → Fixed"
-            parts = line.split('→', 1)
-            original = parts[0].strip().replace('- ', '')
-            fixed = parts[1].strip()
-            fixed_metrics[original] = fixed
-        elif '->' in line:
-            # Handle format like "Original -> Fixed"
-            parts = line.split('->', 1)
-            original = parts[0].strip().replace('- ', '')
-            fixed = parts[1].strip()
+        # Remove any numbering or prefixes
+        if '.' in line:
+            parts = line.split('.', 1)
+            if parts[0].strip().isdigit():
+                line = parts[1].strip()
+        processed_lines.append(line.strip())
+    
+    # Match with original metrics - assuming GPT maintains the order
+    if len(processed_lines) == len(unique_metrics):
+        for original, fixed in zip(unique_metrics, processed_lines):
             fixed_metrics[original] = fixed
     
     # Apply fixes to the dataframe
