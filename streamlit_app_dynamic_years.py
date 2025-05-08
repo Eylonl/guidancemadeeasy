@@ -1185,7 +1185,7 @@ if st.button("🔍 Extract Guidance"):
                 # Display the table with formatting
                 st.dataframe(display_df, use_container_width=True)
                 
-               # Add download button
+                # Add download button
                 import io
                 excel_buffer = io.BytesIO()
                 combined.to_excel(excel_buffer, index=False)
