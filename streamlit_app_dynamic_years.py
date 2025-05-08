@@ -16,23 +16,42 @@ if table and "|" in table:
         # First, standardize the column names
         column_names = [c.strip() for c in rows[0]]
         
-        # Check for and rename "Value or range" column to "Value" for processing
-        for i, col in enumerate(column_names):
-            if "value" in col.lower() or "range" in col.lower():
-                column_names[i] = "Value"  # Standardize the column name for processing
-                
-        # Create DataFrame with standardized column names
+        # Create DataFrame with original column names
         df = pd.DataFrame(rows[1:], columns=column_names)
         
-        # Save the original value column name for later
-        original_value_column_name = next((col for col in rows[0] if "value" in col.lower() or "range" in col.lower()), "Value")
+        # Find the value column - it might be called "Value" or "Value or range"
+        value_column = None
+        for col in df.columns:
+            if "value" in col.lower():
+                value_column = col
+                break
         
-        # Continue with processing as before
-        # ...
-        
-        # Before adding metadata columns, rename "Value" back to original column name if needed
-        if "Value" in df.columns and original_value_column_name != "Value":
-            df.rename(columns={"Value": original_value_column_name}, inplace=True)
+        # If no value column found, we have a problem
+        if not value_column:
+            st.warning("⚠️ No value column found in the extracted data.")
+        else:
+            # Save the original values for later
+            original_values = df[value_column].copy()
+            
+            # Rename the value column to "Value" for consistent processing
+            if value_column != "Value":
+                df.rename(columns={value_column: "Value"}, inplace=True)
+            
+            # Normal processing happens here...
+            # (Parse low, high, average, apply corrections, etc.)
+            
+            # After all processing is done, but before adding metadata columns:
+            # Rename the "Value" column back to "Value or range"
+            if "Value" in df.columns:
+                df.rename(columns={"Value": "Value or range"}, inplace=True)
+                # Restore the original values
+                df["Value or range"] = original_values
+            
+            # Add metadata columns
+            df["FilingDate"] = date_str
+            df["8K_Link"] = url
+            df["Model_Used"] = selected_model
+            
 def extract_number(token: str):
     """
     Enhanced function to extract numeric values from text, with improved handling of 
