@@ -217,8 +217,8 @@ def correct_value_signs(df):
     This version is more cautious about applying negative signs and includes
     better detection of explicitly positive values.
     """
-    if 'Value' not in df.columns:
-        return df  # Skip if Value column is missing
+   ' if 'Value' not in df.columns:
+    '    return df  # Skip if Value column is missing
     
     for idx, row in df.iterrows():
         value_text = str(row.get('Value', ''))
