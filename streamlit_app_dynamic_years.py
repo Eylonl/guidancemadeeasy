@@ -413,7 +413,7 @@ def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
     return accessions
 
 def get_ex99_1_links(cik, accessions):
-    """Enhanced function to find exhibit 99.1 files with better searching"""
+    """Enhanced function to find exhibit 99.1 files with better searching (no debug output)"""
     links = []
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
     
@@ -426,7 +426,6 @@ def get_ex99_1_links(cik, accessions):
         try:
             res = requests.get(index_url, headers=headers, timeout=30)
             if res.status_code != 200:
-                st.warning(f"⚠️ Could not access index: {index_url} (status: {res.status_code})")
                 continue
                 
             soup = BeautifulSoup(res.text, "html.parser")
@@ -443,7 +442,6 @@ def get_ex99_1_links(cik, accessions):
                         filename = tds[2].text.strip()
                         exhibit_url = base_folder + filename
                         links.append((date_str, accession, exhibit_url))
-                        st.success(f"✅ Found exhibit 99.1: {filename}")
                         found_exhibit = True
                         break
             
@@ -480,17 +478,13 @@ def get_ex99_1_links(cik, accessions):
                         test_res = requests.head(test_url, headers=headers, timeout=10)
                         if test_res.status_code == 200:
                             links.append((date_str, accession, test_url))
-                            st.success(f"✅ Found exhibit via pattern: {pattern}")
                             found_exhibit = True
                             break
                     except:
                         continue
                         
-            if not found_exhibit:
-                st.warning(f"⚠️ No exhibit 99.1 found for {accession}")
-                            
         except Exception as e:
-            st.error(f"Error processing index {index_url}: {str(e)}")
+            continue
             
     return links
 
@@ -613,81 +607,51 @@ if st.button("🔍 Extract Guidance"):
                 # Default to most recent if neither input is provided
                 accessions = get_accessions(cik, ticker)
 
-            if not accessions:
-                st.error("No 8-K filings found with the specified criteria.")
-                st.stop()
-
             links = get_ex99_1_links(cik, accessions)
-            
-            if not links:
-                st.error("No exhibit 99.1 files found in the 8-K filings.")
-                st.write("This could mean:")
-                st.write("- The earnings release is in a different exhibit")
-                st.write("- The filing structure is different than expected") 
-                st.write("- The earnings information is in the main 8-K form")
-                st.stop()
-                
             results = []
 
             for date_str, acc, url in links:
                 st.write(f"📄 Processing {url}")
                 try:
-                    # Add timeout and better error handling
-                    response = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}, timeout=30)
-                    
-                    if response.status_code != 200:
-                        st.warning(f"⚠️ Could not access {url} (HTTP {response.status_code})")
-                        continue
-                        
-                    html = response.text
+                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
                     soup = BeautifulSoup(html, "html.parser")
                     
                     # Extract text while preserving structure
                     text = soup.get_text(" ", strip=True)
                     
-                    if len(text) < 100:
-                        st.warning(f"⚠️ Document seems too short ({len(text)} chars). This might not be the right file.")
-                        continue
-                    
-                    # Check if this looks like an earnings release
-                    earnings_indicators = ['earnings', 'results', 'revenue', 'income', 'guidance', 'outlook', 'quarter', 'fiscal']
-                    text_lower = text.lower()
-                    found_indicators = [indicator for indicator in earnings_indicators if indicator in text_lower]
-                    
-                    if len(found_indicators) < 3:
-                        st.warning(f"⚠️ This doesn't appear to be an earnings release. Found indicators: {found_indicators}")
-                        # Continue anyway - sometimes valid files have fewer indicators
-                    
                     # Find paragraphs containing guidance patterns
                     guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
                     
-                    # Extract guidance using OpenAI
-                    if found_guidance and len(guidance_paragraphs) > 100:
+                    # Check if we found any guidance paragraphs
+                    if found_guidance:
                         st.success(f"✅ Found potential guidance information.")
+                        
+                        # Extract guidance from the highlighted text using the selected model
                         table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
                     else:
-                        st.warning(f"⚠️ Limited guidance content found. Using broader document sample.")
-                        # Use a larger sample of the document
-                        paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                        st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
+                        # Use a sample of the document to reduce token usage
                         sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
-                        sample_text += "\n\n".join(paragraphs[:20])  # Use more paragraphs
+                        paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
+                        sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
                         table = extract_guidance(sample_text, ticker, client, model_id)
                     
-                    # Process the table response
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
-                        
                         if len(rows) > 1:  # Check if we have header and at least one row of data
-                            # Continue with normal processing...
+                            # Standardize the column names
                             column_names = [c.strip().lower().replace(' ', '_') for c in rows[0]]
+                            
+                            # Create DataFrame with standardized column names
                             df = pd.DataFrame(rows[1:], columns=column_names)
                             
-                            # Format the numeric columns
+                            # Format the numeric columns to display appropriate symbols
                             df = format_guidance_values(df)
                             
                             # Apply GAAP/non-GAAP split
                             if 'value_or_range' in df.columns:
                                 df = split_gaap_non_gaap(df.rename(columns={'value_or_range': 'Value or range'}))
+                                # Rename back to standard naming
                                 if 'Value or range' in df.columns:
                                     df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
                             
@@ -698,12 +662,21 @@ if st.button("🔍 Extract Guidance"):
                             results.append(df)
                             st.success("✅ Guidance extracted from this 8-K.")
                         else:
-                            st.warning(f"⚠️ Table format detected but no data rows found")
+                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
+                            
+                            # Show a sample of the text to help debug
+                            st.write("Sample of text sent to OpenAI:")
+                            sample_length = min(500, len(guidance_paragraphs))
+                            st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
                     else:
-                        st.warning(f"⚠️ No properly formatted guidance table found")
+                        st.warning(f"⚠️ No guidance table found in {url}")
                         
+                        # Show a sample of the text to help debug
+                        st.write("Sample of text sent to OpenAI:")
+                        sample_length = min(500, len(guidance_paragraphs))
+                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
                 except Exception as e:
-                    st.error(f"Error processing {url}: {str(e)}")
+                    st.warning(f"Could not process: {url}. Error: {str(e)}")
 
             if results:
                 # Combine all results
