@@ -413,22 +413,102 @@ def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
     return accessions
 
 def get_ex99_1_links(cik, accessions):
+    """Enhanced function to find exhibit 99.1 files with better debugging and multiple search methods"""
     links = []
     headers = {'User-Agent': 'Your Name Contact@domain.com'}
+    
     for accession, date_str in accessions:
-        base_folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/"
+        # Remove dashes from accession number for folder name
+        accession_no_dashes = accession.replace('-', '')
+        base_folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession_no_dashes}/"
         index_url = base_folder + f"{accession}-index.htm"
-        res = requests.get(index_url, headers=headers)
-        if res.status_code != 200:
-            continue
-        soup = BeautifulSoup(res.text, "html.parser")
-        for row in soup.find_all("tr"):
-            if "99.1" in row.get_text().lower():
-                tds = row.find_all("td")
-                if len(tds) >= 3:
-                    filename = tds[2].text.strip()
-                    links.append((date_str, accession, base_folder + filename))
-                    break
+        
+        st.write(f"**DEBUG:** Checking index URL: {index_url}")
+        
+        try:
+            res = requests.get(index_url, headers=headers, timeout=30)
+            if res.status_code != 200:
+                st.warning(f"⚠️ Could not access index: {index_url} (status: {res.status_code})")
+                continue
+                
+            soup = BeautifulSoup(res.text, "html.parser")
+            
+            # Look for exhibit 99.1 in multiple ways
+            found_exhibit = False
+            
+            # Method 1: Look for "99.1" or "99.01" in table rows
+            for row in soup.find_all("tr"):
+                row_text = row.get_text().lower()
+                if "99.1" in row_text or "99.01" in row_text:
+                    tds = row.find_all("td")
+                    if len(tds) >= 3:
+                        filename = tds[2].text.strip()
+                        exhibit_url = base_folder + filename
+                        links.append((date_str, accession, exhibit_url))
+                        st.success(f"✅ Found exhibit 99.1: {filename}")
+                        found_exhibit = True
+                        break
+            
+            # Method 2: If not found, look for any .htm files that might be exhibits
+            if not found_exhibit:
+                st.write("**DEBUG:** No 99.1 found, looking for other exhibit files...")
+                for row in soup.find_all("tr"):
+                    tds = row.find_all("td")
+                    if len(tds) >= 3:
+                        filename = tds[2].text.strip()
+                        if filename.endswith('.htm') and ('ex' in filename.lower() or 'exhibit' in filename.lower()):
+                            exhibit_url = base_folder + filename
+                            links.append((date_str, accession, exhibit_url))
+                            st.write(f"**DEBUG:** Found potential exhibit: {filename}")
+                            found_exhibit = True
+                            
+            # Method 3: If still not found, try common exhibit naming patterns
+            if not found_exhibit:
+                st.write("**DEBUG:** Trying common exhibit naming patterns...")
+                date_no_dash = date_str.replace('-', '')
+                common_patterns = [
+                    f"ex-991x{date_no_dash}x8k.htm",
+                    f"ex991x{date_no_dash}x8k.htm",
+                    f"ex-99_1x{date_no_dash}x8k.htm",
+                    f"ex991{date_no_dash}.htm", 
+                    f"exhibit991.htm",
+                    f"ex99-1.htm",
+                    f"ex991.htm",
+                    f"ex-99.1.htm",
+                    f"exhibit99_1.htm"
+                ]
+                
+                for pattern in common_patterns:
+                    test_url = base_folder + pattern
+                    try:
+                        test_res = requests.head(test_url, headers=headers, timeout=10)
+                        if test_res.status_code == 200:
+                            links.append((date_str, accession, test_url))
+                            st.success(f"✅ Found exhibit via pattern: {pattern}")
+                            found_exhibit = True
+                            break
+                    except:
+                        continue
+                        
+            if not found_exhibit:
+                st.warning(f"⚠️ No exhibit 99.1 found for {accession}")
+                # Show available files for debugging
+                st.write("**DEBUG:** Available files in this filing:")
+                file_count = 0
+                for row in soup.find_all("tr"):
+                    tds = row.find_all("td")
+                    if len(tds) >= 3:
+                        filename = tds[2].text.strip()
+                        if filename and not filename.startswith('Complete'):
+                            st.write(f"- {filename}")
+                            file_count += 1
+                        if file_count >= 10:  # Limit output
+                            st.write("... (and more)")
+                            break
+                            
+        except Exception as e:
+            st.error(f"Error processing index {index_url}: {str(e)}")
+            
     return links
 
 
@@ -550,51 +630,114 @@ if st.button("🔍 Extract Guidance"):
                 # Default to most recent if neither input is provided
                 accessions = get_accessions(cik, ticker)
 
+            if not accessions:
+                st.error("No 8-K filings found with the specified criteria.")
+                st.stop()
+
             links = get_ex99_1_links(cik, accessions)
+            
+            if not links:
+                st.error("No exhibit 99.1 files found in the 8-K filings.")
+                st.write("This could mean:")
+                st.write("- The earnings release is in a different exhibit")
+                st.write("- The filing structure is different than expected") 
+                st.write("- The earnings information is in the main 8-K form")
+                st.stop()
+                
             results = []
 
             for date_str, acc, url in links:
                 st.write(f"📄 Processing {url}")
                 try:
-                    html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
+                    # Add timeout and better error handling
+                    response = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}, timeout=30)
+                    
+                    if response.status_code != 200:
+                        st.warning(f"⚠️ Could not access {url} (HTTP {response.status_code})")
+                        continue
+                        
+                    html = response.text
                     soup = BeautifulSoup(html, "html.parser")
                     
                     # Extract text while preserving structure
                     text = soup.get_text(" ", strip=True)
                     
+                    # 🔍 ENHANCED DEBUG: Show what we're working with
+                    st.write(f"**DEBUG:** Document length: {len(text)} characters")
+                    
+                    if len(text) < 100:
+                        st.warning(f"⚠️ Document seems too short ({len(text)} chars). This might not be the right file.")
+                        st.text(f"Content preview: {text[:500]}")
+                        continue
+                    
+                    # Show first part of document to verify it's an earnings release
+                    st.write("**DEBUG:** Document preview:")
+                    st.text(text[:800] + "..." if len(text) > 800 else text)
+                    
+                    # Check if this looks like an earnings release
+                    earnings_indicators = ['earnings', 'results', 'revenue', 'income', 'guidance', 'outlook', 'quarter', 'fiscal']
+                    text_lower = text.lower()
+                    found_indicators = [indicator for indicator in earnings_indicators if indicator in text_lower]
+                    
+                    if len(found_indicators) < 3:
+                        st.warning(f"⚠️ This doesn't appear to be an earnings release. Found indicators: {found_indicators}")
+                        # Continue anyway - sometimes valid files have fewer indicators
+                    else:
+                        st.success(f"✅ Document appears to be an earnings release. Found: {found_indicators}")
+                    
                     # Find paragraphs containing guidance patterns
                     guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
                     
-                    # Check if we found any guidance paragraphs
-                    if found_guidance:
+                    # Enhanced guidance search
+                    st.write(f"**DEBUG:** Found guidance paragraphs: {found_guidance}")
+                    st.write(f"**DEBUG:** Guidance text length: {len(guidance_paragraphs)} characters")
+                    
+                    if guidance_paragraphs:
+                        st.write("**DEBUG:** Guidance text preview:")
+                        st.text(guidance_paragraphs[:1000] + "..." if len(guidance_paragraphs) > 1000 else guidance_paragraphs)
+                    
+                    # Extract guidance using OpenAI
+                    if found_guidance and len(guidance_paragraphs) > 100:
                         st.success(f"✅ Found potential guidance information.")
-                        
-                        # Extract guidance from the highlighted text using the selected model
                         table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
                     else:
-                        st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
-                        # Use a sample of the document to reduce token usage
-                        sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        st.warning(f"⚠️ Limited guidance content found. Using broader document sample.")
+                        # Use a larger sample of the document
                         paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
-                        sample_text += "\n\n".join(paragraphs[:15])  # Just use first few paragraphs
+                        sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
+                        sample_text += "\n\n".join(paragraphs[:20])  # Use more paragraphs
+                        
+                        st.write(f"**DEBUG:** Sending {len(sample_text)} characters to OpenAI")
                         table = extract_guidance(sample_text, ticker, client, model_id)
                     
+                    # Show OpenAI response for debugging
+                    st.write("**DEBUG:** OpenAI response:")
+                    if table:
+                        st.text(str(table)[:1500] + "..." if len(str(table)) > 1500 else str(table))
+                    else:
+                        st.text("No response from OpenAI")
+                    
+                    # Process the table response
                     if table and "|" in table:
                         rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
+                        st.write(f"**DEBUG:** Found {len(rows)} table rows")
+                        
                         if len(rows) > 1:  # Check if we have header and at least one row of data
-                            # Standardize the column names
+                            # Show the raw table for debugging
+                            st.write("**DEBUG:** Raw table rows:")
+                            for i, row in enumerate(rows[:5]):  # Show first 5 rows
+                                st.write(f"Row {i}: {row}")
+                                
+                            # Continue with normal processing...
                             column_names = [c.strip().lower().replace(' ', '_') for c in rows[0]]
-                            
-                            # Create DataFrame with standardized column names
                             df = pd.DataFrame(rows[1:], columns=column_names)
                             
-                            # Format the numeric columns to display appropriate symbols
+                            # Format the numeric columns
                             df = format_guidance_values(df)
                             
                             # Apply GAAP/non-GAAP split
                             if 'value_or_range' in df.columns:
                                 df = split_gaap_non_gaap(df.rename(columns={'value_or_range': 'Value or range'}))
-                                # Rename back to standard naming
                                 if 'Value or range' in df.columns:
                                     df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
                             
@@ -605,21 +748,14 @@ if st.button("🔍 Extract Guidance"):
                             results.append(df)
                             st.success("✅ Guidance extracted from this 8-K.")
                         else:
-                            st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
-                            
-                            # Show a sample of the text to help debug
-                            st.write("Sample of text sent to OpenAI:")
-                            sample_length = min(500, len(guidance_paragraphs))
-                            st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
+                            st.warning(f"⚠️ Table format detected but no data rows found")
                     else:
-                        st.warning(f"⚠️ No guidance table found in {url}")
+                        st.warning(f"⚠️ No properly formatted guidance table found")
                         
-                        # Show a sample of the text to help debug
-                        st.write("Sample of text sent to OpenAI:")
-                        sample_length = min(500, len(guidance_paragraphs))
-                        st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
                 except Exception as e:
-                    st.warning(f"Could not process: {url}. Error: {str(e)}")
+                    st.error(f"Error processing {url}: {str(e)}")
+                    import traceback
+                    st.text(traceback.format_exc())
 
             if results:
                 # Combine all results
@@ -662,4 +798,4 @@ if st.button("🔍 Extract Guidance"):
                 
                 st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
-                st.warning("No guidance data extracted.")
+                st.warning("No guidance data extracted. Check the debug output above to see what went wrong.")
