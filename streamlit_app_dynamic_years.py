@@ -190,7 +190,7 @@ index=0  # Default to first option (GPT-4 Turbo)
 year_input = st.text_input(“How many years back to search for 8-K filings? (Leave blank for most recent only)”, “”)
 quarter_input = st.text_input(“OR enter specific quarter (e.g., 2Q25, Q4FY24)”, “”)
 
-  # This is Part 2 of 3 - Add this after Part 1
+# This is Part 2 - Add this after Part 1
 
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
@@ -307,13 +307,9 @@ else:
     
     if start_month >= fiscal_year_start_month:
         # This quarter starts in the previous calendar year
-        # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
-        # Q1 (Jul-Sep) and Q2 (Oct-Dec) start in calendar year 2023
         start_calendar_year = year_num - 1
     else:
         # This quarter starts in the current calendar year
-        # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
-        # Q3 (Jan-Mar) and Q4 (Apr-Jun) start in calendar year 2024
         start_calendar_year = year_num
 
 # For quarters that span calendar years, the end date is in the next calendar year
@@ -382,7 +378,6 @@ fiscal_year_end_month, fiscal_year_end_day = get_fiscal_year_end(ticker, cik)
 
 if years_back:
     # Modified to add one extra quarter (approximately 91.25 days)
-    # For example: 1 year = 365 + 91.25 days = 456.25 days
     cutoff = datetime.today() - timedelta(days=(365 * years_back) + 91.25)
     
     st.write(f"Looking for filings from the past {years_back} years plus 1 quarter (from {cutoff.strftime('%Y-%m-%d')} to present)")
@@ -395,7 +390,6 @@ if years_back:
 
 elif specific_quarter:
     # Parse quarter and year from input - handle various formats
-    # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
     match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:\s*FY\s*|\s*)?(\d{2}|\d{4})', specific_quarter.upper())
     if match:
         quarter = match.group(1) or match.group(2)
@@ -420,8 +414,8 @@ elif specific_quarter:
         st.write(f"Expected earnings reporting window: {fiscal_info['expected_report']}")
         
         # We want to find filings around the expected earnings report date
-        start_date = fiscal_info['report_start'] - timedelta(days=15)  # Include potential early reports
-        end_date = fiscal_info['report_end'] + timedelta(days=15)  # Include potential late reports
+        start_date = fiscal_info['report_start'] - timedelta(days=15)
+        end_date = fiscal_info['report_end'] + timedelta(days=15)
         
         st.write(f"Searching for filings between: {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}")
         
@@ -459,10 +453,11 @@ else:
 
 return accessions
 ```
-# This is Part 3 of 3 - Add this after Part 2
+
+# This is Part 3a - Add this after Part 2
 
 def get_ex99_1_links(cik, accessions):
-“”“Enhanced function to find exhibit 99.1 files with better searching (no debug output)”””
+“”“Enhanced function to find exhibit 99.1 files with better searching”””
 links = []
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 
@@ -621,6 +616,8 @@ if guidance_paragraphs:
 
 return formatted_paragraphs, found_paragraphs
 ```
+
+# This is Part 3B - Add this after Part 3A
 
 # Main execution logic
 
@@ -790,3 +787,4 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
     else:
         st.warning("No guidance data extracted.")
 ```
+             
