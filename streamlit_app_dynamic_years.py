@@ -8,7 +8,7 @@ import os
 import re
 
 def format_percent(val):
-“”“Format a value as a percentage with consistent decimal places”””
+# Format a value as a percentage with consistent decimal places
 if val is None:
 return None
 if isinstance(val, (int, float)):
@@ -16,7 +16,7 @@ return f”{val:.1f}%”
 return val
 
 def format_dollar(val):
-“”“Format a value as a dollar amount with consistent decimal places”””
+# Format a value as a dollar amount with consistent decimal places
 if val is None:
 return None
 if isinstance(val, (int, float)):
@@ -30,10 +30,7 @@ return f”${val:.2f}”
 return val
 
 def extract_guidance(text, ticker, client, model_name):
-“””
-Enhanced function to extract guidance from SEC filings.
-Now directly extracting Low, High, and Average values from the language model.
-“””
+# Enhanced function to extract guidance from SEC filings
 prompt = f””“You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}.
 
 Return a structured table containing the following columns:
@@ -88,12 +85,12 @@ try:
     )
     return response.choices[0].message.content
 except Exception as e:
-    st.warning(f"⚠️ Error extracting guidance: {str(e)}")
+    st.warning(f"Error extracting guidance: {str(e)}")
     return None
 ```
 
 def split_gaap_non_gaap(df):
-“”“Split rows that contain both GAAP and non-GAAP guidance into separate rows”””
+# Split rows that contain both GAAP and non-GAAP guidance into separate rows
 if ‘value_or_range’ not in df.columns or ‘metric’ not in df.columns:
 return df  # Avoid crash if column names are missing
 
@@ -116,7 +113,7 @@ return pd.DataFrame(rows)
 ```
 
 def format_guidance_values(df):
-“”“Format the numeric values to appropriate formats based on the metric and value types”””
+# Format the numeric values to appropriate formats based on the metric and value types
 # Make a copy to avoid modifying the original
 formatted_df = df.copy()
 
@@ -155,7 +152,7 @@ return formatted_df
 # Streamlit App Setup
 
 st.set_page_config(page_title=“SEC 8-K Guidance Extractor”, layout=“centered”)
-st.title(“📄 SEC 8-K Guidance Extractor”)
+st.title(“SEC 8-K Guidance Extractor”)
 
 # Modified inputs section to support both ticker and CIK
 
@@ -190,7 +187,7 @@ index=0  # Default to first option (GPT-4 Turbo)
 year_input = st.text_input(“How many years back to search for 8-K filings? (Leave blank for most recent only)”, “”)
 quarter_input = st.text_input(“OR enter specific quarter (e.g., 2Q25, Q4FY24)”, “”)
 
-# This is Part 2 - Add this after Part 1
+        # This is Part 2 - Add this after Part 1
 
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
@@ -202,7 +199,7 @@ if entry[“ticker”].upper() == ticker:
 return str(entry[“cik_str”]).zfill(10)
 
 def get_ticker_from_cik(cik):
-“”“Lookup ticker symbol from CIK for display purposes”””
+# Lookup ticker symbol from CIK for display purposes
 try:
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 res = requests.get(“https://www.sec.gov/files/company_tickers.json”, headers=headers)
@@ -216,10 +213,7 @@ except:
 return None
 
 def get_fiscal_year_end(ticker, cik):
-“””
-Get the fiscal year end month for a company from SEC data.
-Returns the month (1-12) and day.
-“””
+# Get the fiscal year end month for a company from SEC data. Returns the month (1-12) and day.
 try:
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 url = f”https://data.sec.gov/submissions/CIK{cik}.json”
@@ -235,23 +229,21 @@ data = resp.json()
             day = int(fiscal_year_end[2:])
             
             month_name = datetime(2000, month, 1).strftime('%B')
-            st.success(f"✅ Retrieved fiscal year end for {ticker}: {month_name} {day}")
+            st.success(f"Retrieved fiscal year end for {ticker}: {month_name} {day}")
             
             return month, day
     
     # If not found, default to December 31 (calendar year)
-    st.warning(f"⚠️ Could not determine fiscal year end for {ticker} from SEC data. Using December 31 (calendar year).")
+    st.warning(f"Could not determine fiscal year end for {ticker} from SEC data. Using December 31 (calendar year).")
     return 12, 31
     
 except Exception as e:
-    st.warning(f"⚠️ Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
+    st.warning(f"Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
     return 12, 31
 ```
 
 def generate_fiscal_quarters(fiscal_year_end_month):
-“””
-Dynamically generate fiscal quarters based on the fiscal year end month.
-“””
+# Dynamically generate fiscal quarters based on the fiscal year end month
 # Calculate the first month of the fiscal year (month after fiscal year end)
 fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
 
@@ -277,10 +269,7 @@ return quarters
 ```
 
 def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day):
-“””
-Calculate the appropriate date range for a fiscal quarter
-based on the fiscal year end month.
-“””
+# Calculate the appropriate date range for a fiscal quarter based on the fiscal year end month
 # Generate quarters dynamically based on fiscal year end
 quarters = generate_fiscal_quarters(fiscal_year_end_month)
 
@@ -364,7 +353,7 @@ return {
 ```
 
 def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
-“”“General function for finding filings”””
+# General function for finding filings
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 url = f”https://data.sec.gov/submissions/CIK{cik}.json”
 resp = requests.get(url, headers=headers)
@@ -453,11 +442,10 @@ else:
 
 return accessions
 ```
-
 # This is Part 3A - Add this after Part 2
 
 def get_ex99_1_links(cik, accessions):
-“”“Enhanced function to find exhibit 99.1 files with better searching”””
+# Enhanced function to find exhibit 99.1 files with better searching
 links = []
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 
@@ -535,32 +523,31 @@ return links
 ```
 
 def find_guidance_paragraphs(text):
-“””
-Extract paragraphs from text that are likely to contain guidance information.
-Returns both the filtered paragraphs and a boolean indicating if any were found.
-“””
-# Define patterns to identify guidance sections
-guidance_patterns = [
-r’(?i)outlook’,
-r’(?i)guidance’,
-r’(?i)financial outlook’,
-r’(?i)business outlook’,
-r’(?i)forward[\s-]*looking’,
-r’(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)’,
-r’(?i)(?:we|company) expect(?:s)?’,
-r’(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)’,
-r’(?i)to be (?:in the range of|approximately)’,
-r’(?i)margin (?:is|to be) (?:expected|anticipated|forecast)’,
-r’(?i)growth of (?:approximately|about)’,
-r’(?i)for (?:fiscal|the fiscal)’,
-r’(?i)next quarter’,
-r’(?i)full year’,
-r’(?i)current quarter’,
-r’(?i)future quarter’,
-r’(?i)Q[1-4]’
-]
+# Extract paragraphs from text that are likely to contain guidance information.
+# Returns both the filtered paragraphs and a boolean indicating if any were found.
 
 ```
+# Define patterns to identify guidance sections
+guidance_patterns = [
+    r'(?i)outlook',
+    r'(?i)guidance',
+    r'(?i)financial outlook',
+    r'(?i)business outlook',
+    r'(?i)forward[\s-]*looking',
+    r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
+    r'(?i)(?:we|company) expect(?:s)?',
+    r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
+    r'(?i)to be (?:in the range of|approximately)',
+    r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
+    r'(?i)growth of (?:approximately|about)',
+    r'(?i)for (?:fiscal|the fiscal)',
+    r'(?i)next quarter',
+    r'(?i)full year',
+    r'(?i)current quarter',
+    r'(?i)future quarter',
+    r'(?i)Q[1-4]'
+]
+
 # Split text into paragraphs
 paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
 
@@ -616,12 +603,11 @@ if guidance_paragraphs:
 
 return formatted_paragraphs, found_paragraphs
 ```
-
 # This is Part 3B - Add this after Part 3A
 
 # Main execution logic
 
-if st.button(“🔍 Extract Guidance”):
+if st.button(“Extract Guidance”):
 if not api_key:
 st.error(“Please enter your OpenAI API key.”)
 elif not identifier:
@@ -677,7 +663,7 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
     results = []
 
     for date_str, acc, url in links:
-        st.write(f"📄 Processing {url}")
+        st.write(f"Processing {url}")
         try:
             html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
             soup = BeautifulSoup(html, "html.parser")
@@ -690,12 +676,12 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
             
             # Check if we found any guidance paragraphs
             if found_guidance:
-                st.success(f"✅ Found potential guidance information.")
+                st.success(f"Found potential guidance information.")
                 
                 # Extract guidance from the highlighted text using the selected model
                 table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
             else:
-                st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
+                st.warning(f"No guidance paragraphs found. Trying with a sample of the document.")
                 # Use a sample of the document to reduce token usage
                 sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
                 paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
@@ -726,16 +712,16 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
                     df["filing_url"] = url
                     df["model_used"] = selected_model
                     results.append(df)
-                    st.success("✅ Guidance extracted from this 8-K.")
+                    st.success("Guidance extracted from this 8-K.")
                 else:
-                    st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
+                    st.warning(f"Table format was detected but no data rows were found in {url}")
                     
                     # Show a sample of the text to help debug
                     st.write("Sample of text sent to OpenAI:")
                     sample_length = min(500, len(guidance_paragraphs))
                     st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
             else:
-                st.warning(f"⚠️ No guidance table found in {url}")
+                st.warning(f"No guidance table found in {url}")
                 
                 # Show a sample of the text to help debug
                 st.write("Sample of text sent to OpenAI:")
@@ -763,7 +749,7 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
         }
         
         # Preview the table
-        st.subheader("🔍 Preview of Extracted Guidance")
+        st.subheader("Preview of Extracted Guidance")
         
         # Select the most relevant columns for display
         display_cols = ['metric', 'value_or_range', 'period', 'period_type', 'low', 'high', 'average', 'filing_date']
@@ -783,7 +769,7 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
         excel_df = combined.rename(columns={c: display_rename.get(c, c) for c in combined.columns})
         excel_df.to_excel(excel_buffer, index=False)
         
-        st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     else:
         st.warning("No guidance data extracted.")
 ```
