@@ -190,6 +190,8 @@ index=0  # Default to first option (GPT-4 Turbo)
 year_input = st.text_input(“How many years back to search for 8-K filings? (Leave blank for most recent only)”, “”)
 quarter_input = st.text_input(“OR enter specific quarter (e.g., 2Q25, Q4FY24)”, “”)
 
+  # This is Part 2 of 3 - Add this after Part 1
+
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
@@ -273,7 +275,6 @@ for q in range(1, 5):
 
 return quarters
 ```
-       # This is Part 2 - add this code after Part 1
 
 def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day):
 “””
@@ -458,6 +459,7 @@ else:
 
 return accessions
 ```
+# This is Part 3 of 3 - Add this after Part 2
 
 def get_ex99_1_links(cik, accessions):
 “”“Enhanced function to find exhibit 99.1 files with better searching (no debug output)”””
@@ -619,6 +621,8 @@ if guidance_paragraphs:
 
 return formatted_paragraphs, found_paragraphs
 ```
+
+# Main execution logic
 
 if st.button(“🔍 Extract Guidance”):
 if not api_key:
