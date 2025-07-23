@@ -8,149 +8,203 @@ import os
 import re
 
 def format_percent(val):
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        return f"{val:.1f}%"
-    return val
+“”“Format a value as a percentage with consistent decimal places”””
+if val is None:
+return None
+if isinstance(val, (int, float)):
+return f”{val:.1f}%”
+return val
 
 def format_dollar(val):
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        if abs(val) >= 100:
-            return f"${val:.0f}"
-        elif abs(val) >= 10:
-            return f"${val:.1f}"
-        else:
-            return f"${val:.2f}"
-    return val
-    
+“”“Format a value as a dollar amount with consistent decimal places”””
+if val is None:
+return None
+if isinstance(val, (int, float)):
+# Use different formatting based on value magnitude
+if abs(val) >= 100:  # Large values, use whole numbers
+return f”${val:.0f}”
+elif abs(val) >= 10:  # Medium values, use 1 decimal place
+return f”${val:.1f}”
+else:  # Small values, use 2 decimal places
+return f”${val:.2f}”
+return val
+
 def extract_guidance(text, ticker, client, model_name):
-    prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
+“””
+Enhanced function to extract guidance from SEC filings.
+Now directly extracting Low, High, and Average values from the language model.
+“””
+prompt = f””“You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}.
 
 Return a structured table containing the following columns:
+
 - metric (e.g. Revenue, EPS, Operating Margin)
 - value_or_range (e.g. $1.5B–$1.6B or $2.05 or $(0.05) to $0.10 - EXACTLY as it appears in the text)
 - period (e.g. Q3 FY24, Full Year 2025)
-- period_type (MUST be either "Quarter" or "Full Year" based on the period text)
+- period_type (MUST be either “Quarter” or “Full Year” based on the period text)
 - low (numeric low end of the range, or the single value if not a range)
 - high (numeric high end of the range, or the single value if not a range)
 - average (average of low and high, or just the value if not a range)
 
 VERY IMPORTANT:
-- Look for sections titled 'Outlook', 'Guidance', 'Financial Outlook', 'Business Outlook', or similar
-- Also look for statements containing phrases like "expect", "anticipate", "forecast", "will be", "to be in the range of"
+
+- Look for sections titled ‘Outlook’, ‘Guidance’, ‘Financial Outlook’, ‘Business Outlook’, or similar
+- Also look for statements containing phrases like “expect”, “anticipate”, “forecast”, “will be”, “to be in the range of”
 - Review the ENTIRE document for ANY forward-looking statements about future performance
-- Pay special attention to sections describing "For the fiscal quarter", "For the fiscal year", "For next quarter", etc.
+- Pay special attention to sections describing “For the fiscal quarter”, “For the fiscal year”, “For next quarter”, etc.
 
 CRITICAL GUIDANCE FOR THE NUMERIC COLUMNS (low, high, average):
-- For low, high, and average columns, provide ONLY numeric values (no $ signs, no % symbols, no "million" or "billion" text)
-- Use negative numbers for negative values: -1 instead of "(1)" and -5 instead of "(5%)"
-- For mixed sign ranges like "$(1) million to $1 million", make sure low is negative (-1) and high is positive (1)
+
+- For low, high, and average columns, provide ONLY numeric values (no $ signs, no % symbols, no “million” or “billion” text)
+- Use negative numbers for negative values: -1 instead of “(1)” and -5 instead of “(5%)”
+- For mixed sign ranges like “$(1) million to $1 million”, make sure low is negative (-1) and high is positive (1)
 - Convert all billions to millions (multiply by 1000): $1.2 billion → 1200
-- For percentages, just give the number without % sign: "5% to 7%" → low=5, high=7
-- For dollar amounts, omit the $ sign: "$0.05 to $0.10" → low=0.05, high=0.10
+- For percentages, just give the number without % sign: “5% to 7%” → low=5, high=7
+- For dollar amounts, omit the $ sign: “$0.05 to $0.10” → low=0.05, high=0.10
 
 FOR THE PERIOD TYPE COLUMN:
-- Classify each period as either "Quarter" or "Full Year" based on the applicable period
-- Use "Quarter" for: Q1, Q2, Q3, Q4, First Quarter, Next Quarter, Current Quarter, etc.
-- Use "Full Year" for: Full Year, Fiscal Year, FY, Annual, Year Ending, etc.
-- If a period just mentions a year (e.g., "2023" or "FY24") without specifying a quarter, classify it as "Full Year"
-- THIS COLUMN IS REQUIRED AND MUST ONLY CONTAIN "Quarter" OR "Full Year" - NO OTHER VALUES
+
+- Classify each period as either “Quarter” or “Full Year” based on the applicable period
+- Use “Quarter” for: Q1, Q2, Q3, Q4, First Quarter, Next Quarter, Current Quarter, etc.
+- Use “Full Year” for: Full Year, Fiscal Year, FY, Annual, Year Ending, etc.
+- If a period just mentions a year (e.g., “2023” or “FY24”) without specifying a quarter, classify it as “Full Year”
+- THIS COLUMN IS REQUIRED AND MUST ONLY CONTAIN “Quarter” OR “Full Year” - NO OTHER VALUES
 
 FORMATTING INSTRUCTIONS FOR VALUE_OR_RANGE COLUMN:
-- Always preserve the original notation exactly as it appears in the document (maintain parentheses, $ signs, % symbols)
-- Example: If document says "($0.05) to $0.10", use exactly "($0.05) to $0.10" in value_or_range column
-- Example: If document says "(5%) to 2%", use exactly "(5%) to 2%" in value_or_range column
-- For billion values, keep them as billions in this column: "$1.10 billion to $1.11 billion"
 
-Respond in table format without commentary.\n\n{text}"""
-    
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.warning(f"Error extracting guidance: {str(e)}")
-        return None
+- Always preserve the original notation exactly as it appears in the document (maintain parentheses, $ signs, % symbols)
+- Example: If document says “($0.05) to $0.10”, use exactly “($0.05) to $0.10” in value_or_range column
+- Example: If document says “(5%) to 2%”, use exactly “(5%) to 2%” in value_or_range column
+- For billion values, keep them as billions in this column: “$1.10 billion to $1.11 billion”
+
+Respond in table format without commentary.\n\n{text}”””
+
+```
+try:
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
+    return response.choices[0].message.content
+except Exception as e:
+    st.warning(f"⚠️ Error extracting guidance: {str(e)}")
+    return None
+```
 
 def split_gaap_non_gaap(df):
-    if 'value_or_range' not in df.columns or 'metric' not in df.columns:
-        return df
+“”“Split rows that contain both GAAP and non-GAAP guidance into separate rows”””
+if ‘value_or_range’ not in df.columns or ‘metric’ not in df.columns:
+return df  # Avoid crash if column names are missing
 
-    rows = []
-    for _, row in df.iterrows():
-        val = str(row['value_or_range'])
-        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
-        if match:
-            gaap_val = match.group(1).strip() + " GAAP"
-            non_gaap_val = match.group(2).strip() + " non-GAAP"
-            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
-                new_row = row.copy()
-                new_row["value_or_range"] = new_val
-                new_row["metric"] = f"{row['metric']} ({label})"
-                rows.append(new_row)
-        else:
-            rows.append(row)
-    return pd.DataFrame(rows)
+```
+rows = []
+for _, row in df.iterrows():
+    val = str(row['value_or_range'])
+    match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
+    if match:
+        gaap_val = match.group(1).strip() + " GAAP"
+        non_gaap_val = match.group(2).strip() + " non-GAAP"
+        for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
+            new_row = row.copy()
+            new_row["value_or_range"] = new_val
+            new_row["metric"] = f"{row['metric']} ({label})"
+            rows.append(new_row)
+    else:
+        rows.append(row)
+return pd.DataFrame(rows)
+```
 
 def format_guidance_values(df):
-    formatted_df = df.copy()
+“”“Format the numeric values to appropriate formats based on the metric and value types”””
+# Make a copy to avoid modifying the original
+formatted_df = df.copy()
+
+```
+for idx, row in df.iterrows():
+    value_text = str(row.get('value_or_range', ''))
     
-    for idx, row in df.iterrows():
-        value_text = str(row.get('value_or_range', ''))
-        is_percentage = '%' in value_text
-        is_dollar = '$' in value_text
-        
-        for col in ['low', 'high', 'average']:
-            if col in df.columns and not pd.isnull(row.get(col)):
-                try:
-                    val = float(row[col])
-                    
-                    if is_percentage:
-                        formatted_df.at[idx, col] = f"{val:.1f}%"
-                    elif is_dollar:
-                        if abs(val) >= 100:
-                            formatted_df.at[idx, col] = f"${val:.0f}"
-                        elif abs(val) >= 10:
-                            formatted_df.at[idx, col] = f"${val:.1f}"
-                        else:
-                            formatted_df.at[idx, col] = f"${val:.2f}"
-                except:
-                    continue
+    # Determine if it's a percentage value
+    is_percentage = '%' in value_text
     
-    return formatted_df
+    # Determine if it's a dollar value
+    is_dollar = '$' in value_text
+    
+    # Format the Low, High, Average columns based on the value type
+    for col in ['low', 'high', 'average']:
+        if col in df.columns and not pd.isnull(row.get(col)):
+            try:
+                val = float(row[col])
+                
+                if is_percentage:
+                    formatted_df.at[idx, col] = f"{val:.1f}%"
+                elif is_dollar:
+                    if abs(val) >= 100:
+                        formatted_df.at[idx, col] = f"${val:.0f}"
+                    elif abs(val) >= 10:
+                        formatted_df.at[idx, col] = f"${val:.1f}"
+                    else:
+                        formatted_df.at[idx, col] = f"${val:.2f}"
+            except:
+                # Skip if we can't parse as float
+                continue
 
-st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
-st.title("SEC 8-K Guidance Extractor")
+return formatted_df
+```
 
-input_method = st.radio("Choose input method:", ["Ticker Symbol", "CIK Code"])
+# NEW: Function to detect if input is CIK or ticker
 
-if input_method == "Ticker Symbol":
-    identifier = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
-    ticker = identifier
-    cik = None
-else:
-    identifier = st.text_input("Enter CIK Code (e.g., 0000789019)", "")
-    ticker = identifier
-    cik = identifier.zfill(10) if identifier else None
+def is_cik_format(input_str):
+“”“Check if input looks like a CIK (10 digits)”””
+return input_str.strip().isdigit() and len(input_str.strip()) == 10
 
-api_key = st.text_input("Enter OpenAI API Key", type="password")
+# NEW: Function to get ticker from CIK
+
+def get_ticker_from_cik(cik):
+“”“Get ticker symbol from CIK for display purposes”””
+try:
+headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
+res = requests.get(“https://www.sec.gov/files/company_tickers.json”, headers=headers)
+data = res.json()
+for entry in data.values():
+if str(entry[“cik_str”]).zfill(10) == cik:
+return entry[“ticker”].upper()
+return None
+except:
+return None
+
+# Streamlit App Setup
+
+st.set_page_config(page_title=“SEC 8-K Guidance Extractor”, layout=“centered”)
+st.title(“📄 SEC 8-K Guidance Extractor”)
+
+# MODIFIED: Updated input label and help text
+
+ticker_or_cik = st.text_input(
+“Enter Stock Ticker or CIK (e.g., MSFT or 0000789019)”,
+“MSFT”,
+help=“Enter either a stock ticker (e.g., MSFT) or a 10-digit CIK code (e.g., 0000789019)”
+).upper()
+
+api_key = st.text_input(“Enter OpenAI API Key”, type=“password”)
+
+# Add model selection dropdown
 
 openai_models = {
-    "GPT-4 Turbo": "gpt-4-turbo-preview",
-    "GPT-4": "gpt-4",
-    "GPT-3.5 Turbo": "gpt-3.5-turbo"
+“GPT-4 Turbo”: “gpt-4-turbo-preview”,
+“GPT-4”: “gpt-4”,
+“GPT-3.5 Turbo”: “gpt-3.5-turbo”
 }
-selected_model = st.selectbox("Select OpenAI Model", list(openai_models.keys()), index=0)
+selected_model = st.selectbox(
+“Select OpenAI Model”,
+list(openai_models.keys()),
+index=0  # Default to first option (GPT-4 Turbo)
+)
 
-year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
-quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
-        # This is Part 2 - Add this after Part 1
+# Both filter options displayed at the same time
+
+year_input = st.text_input(“How many years back to search for 8-K filings? (Leave blank for most recent only)”, “”)
+quarter_input = st.text_input(“OR enter specific quarter (e.g., 2Q25, Q4FY24)”, “”)
 
 @st.cache_data(show_spinner=False)
 def lookup_cik(ticker):
@@ -161,22 +215,11 @@ for entry in data.values():
 if entry[“ticker”].upper() == ticker:
 return str(entry[“cik_str”]).zfill(10)
 
-def get_ticker_from_cik(cik):
-# Lookup ticker symbol from CIK for display purposes
-try:
-headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
-res = requests.get(“https://www.sec.gov/files/company_tickers.json”, headers=headers)
-data = res.json()
-cik_int = int(cik)
-for entry in data.values():
-if entry[“cik_str”] == cik_int:
-return entry[“ticker”].upper()
-return None
-except:
-return None
-
 def get_fiscal_year_end(ticker, cik):
-# Get the fiscal year end month for a company from SEC data. Returns the month (1-12) and day.
+“””
+Get the fiscal year end month for a company from SEC data.
+Returns the month (1-12) and day.
+“””
 try:
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 url = f”https://data.sec.gov/submissions/CIK{cik}.json”
@@ -192,21 +235,23 @@ data = resp.json()
             day = int(fiscal_year_end[2:])
             
             month_name = datetime(2000, month, 1).strftime('%B')
-            st.success(f"Retrieved fiscal year end for {ticker}: {month_name} {day}")
+            st.success(f"✅ Retrieved fiscal year end for {ticker}: {month_name} {day}")
             
             return month, day
     
     # If not found, default to December 31 (calendar year)
-    st.warning(f"Could not determine fiscal year end for {ticker} from SEC data. Using December 31 (calendar year).")
+    st.warning(f"⚠️ Could not determine fiscal year end for {ticker} from SEC data. Using December 31 (calendar year).")
     return 12, 31
     
 except Exception as e:
-    st.warning(f"Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
+    st.warning(f"⚠️ Error retrieving fiscal year end: {str(e)}. Using December 31 (calendar year).")
     return 12, 31
 ```
 
 def generate_fiscal_quarters(fiscal_year_end_month):
-# Dynamically generate fiscal quarters based on the fiscal year end month
+“””
+Dynamically generate fiscal quarters based on the fiscal year end month.
+“””
 # Calculate the first month of the fiscal year (month after fiscal year end)
 fiscal_year_start_month = (fiscal_year_end_month % 12) + 1
 
@@ -232,7 +277,10 @@ return quarters
 ```
 
 def get_fiscal_dates(ticker, quarter_num, year_num, fiscal_year_end_month, fiscal_year_end_day):
-# Calculate the appropriate date range for a fiscal quarter based on the fiscal year end month
+“””
+Calculate the appropriate date range for a fiscal quarter
+based on the fiscal year end month.
+“””
 # Generate quarters dynamically based on fiscal year end
 quarters = generate_fiscal_quarters(fiscal_year_end_month)
 
@@ -259,9 +307,13 @@ else:
     
     if start_month >= fiscal_year_start_month:
         # This quarter starts in the previous calendar year
+        # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
+        # Q1 (Jul-Sep) and Q2 (Oct-Dec) start in calendar year 2023
         start_calendar_year = year_num - 1
     else:
         # This quarter starts in the current calendar year
+        # Example: For fiscal year ending in June (FY2024 = Jul 2023-Jun 2024)
+        # Q3 (Jan-Mar) and Q4 (Apr-Jun) start in calendar year 2024
         start_calendar_year = year_num
 
 # For quarters that span calendar years, the end date is in the next calendar year
@@ -316,7 +368,7 @@ return {
 ```
 
 def get_accessions(cik, ticker, years_back=None, specific_quarter=None):
-# General function for finding filings
+“”“General function for finding filings”””
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 url = f”https://data.sec.gov/submissions/CIK{cik}.json”
 resp = requests.get(url, headers=headers)
@@ -330,6 +382,7 @@ fiscal_year_end_month, fiscal_year_end_day = get_fiscal_year_end(ticker, cik)
 
 if years_back:
     # Modified to add one extra quarter (approximately 91.25 days)
+    # For example: 1 year = 365 + 91.25 days = 456.25 days
     cutoff = datetime.today() - timedelta(days=(365 * years_back) + 91.25)
     
     st.write(f"Looking for filings from the past {years_back} years plus 1 quarter (from {cutoff.strftime('%Y-%m-%d')} to present)")
@@ -342,6 +395,7 @@ if years_back:
 
 elif specific_quarter:
     # Parse quarter and year from input - handle various formats
+    # Examples: 2Q25, Q4FY24, Q3 2024, Q1 FY 2025, etc.
     match = re.search(r'(?:Q?(\d)Q?|Q(\d))(?:\s*FY\s*|\s*)?(\d{2}|\d{4})', specific_quarter.upper())
     if match:
         quarter = match.group(1) or match.group(2)
@@ -366,8 +420,8 @@ elif specific_quarter:
         st.write(f"Expected earnings reporting window: {fiscal_info['expected_report']}")
         
         # We want to find filings around the expected earnings report date
-        start_date = fiscal_info['report_start'] - timedelta(days=15)
-        end_date = fiscal_info['report_end'] + timedelta(days=15)
+        start_date = fiscal_info['report_start'] - timedelta(days=15)  # Include potential early reports
+        end_date = fiscal_info['report_end'] + timedelta(days=15)  # Include potential late reports
         
         st.write(f"Searching for filings between: {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}")
         
@@ -405,10 +459,9 @@ else:
 
 return accessions
 ```
-# This is Part 3A - Add this after Part 2
 
 def get_ex99_1_links(cik, accessions):
-# Enhanced function to find exhibit 99.1 files with better searching
+“”“Enhanced function to find exhibit 99.1 files with better searching (no debug output)”””
 links = []
 headers = {‘User-Agent’: ‘Your Name Contact@domain.com’}
 
@@ -486,31 +539,32 @@ return links
 ```
 
 def find_guidance_paragraphs(text):
-# Extract paragraphs from text that are likely to contain guidance information.
-# Returns both the filtered paragraphs and a boolean indicating if any were found.
-
-```
+“””
+Extract paragraphs from text that are likely to contain guidance information.
+Returns both the filtered paragraphs and a boolean indicating if any were found.
+“””
 # Define patterns to identify guidance sections
 guidance_patterns = [
-    r'(?i)outlook',
-    r'(?i)guidance',
-    r'(?i)financial outlook',
-    r'(?i)business outlook',
-    r'(?i)forward[\s-]*looking',
-    r'(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)',
-    r'(?i)(?:we|company) expect(?:s)?',
-    r'(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)',
-    r'(?i)to be (?:in the range of|approximately)',
-    r'(?i)margin (?:is|to be) (?:expected|anticipated|forecast)',
-    r'(?i)growth of (?:approximately|about)',
-    r'(?i)for (?:fiscal|the fiscal)',
-    r'(?i)next quarter',
-    r'(?i)full year',
-    r'(?i)current quarter',
-    r'(?i)future quarter',
-    r'(?i)Q[1-4]'
+r’(?i)outlook’,
+r’(?i)guidance’,
+r’(?i)financial outlook’,
+r’(?i)business outlook’,
+r’(?i)forward[\s-]*looking’,
+r’(?i)for (?:the )?(?:fiscal|next|coming|upcoming) (?:quarter|year)’,
+r’(?i)(?:we|company) expect(?:s)?’,
+r’(?i)revenue (?:is|to be) (?:in the range of|expected to|anticipated to)’,
+r’(?i)to be (?:in the range of|approximately)’,
+r’(?i)margin (?:is|to be) (?:expected|anticipated|forecast)’,
+r’(?i)growth of (?:approximately|about)’,
+r’(?i)for (?:fiscal|the fiscal)’,
+r’(?i)next quarter’,
+r’(?i)full year’,
+r’(?i)current quarter’,
+r’(?i)future quarter’,
+r’(?i)Q[1-4]’
 ]
 
+```
 # Split text into paragraphs
 paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
 
@@ -566,36 +620,36 @@ if guidance_paragraphs:
 
 return formatted_paragraphs, found_paragraphs
 ```
-# This is Part 3B - Add this after Part 3A
 
-# Main execution logic
-
-if st.button(“Extract Guidance”):
+if st.button(“🔍 Extract Guidance”):
 if not api_key:
 st.error(“Please enter your OpenAI API key.”)
-elif not identifier:
-st.error(“Please enter a ticker symbol or CIK code.”)
 else:
-# Handle CIK lookup or validation
-if input_method == “Ticker Symbol”:
-cik = lookup_cik(identifier)
+# MODIFIED: Handle both ticker and CIK inputs
+if is_cik_format(ticker_or_cik):
+# Input is a CIK
+cik = ticker_or_cik.strip()
+# Try to get ticker for display purposes
+ticker = get_ticker_from_cik(cik)
+if ticker:
+st.info(f”Using CIK {cik} for ticker {ticker}”)
+else:
+ticker = f”CIK-{cik}”  # Use CIK as identifier if ticker not found
+st.info(f”Using CIK {cik} (ticker not found)”)
+else:
+# Input is a ticker
+ticker = ticker_or_cik.strip()
+cik = lookup_cik(ticker)
 if not cik:
 st.error(“CIK not found for ticker.”)
 st.stop()
-ticker = identifier
 else:
-# For CIK input, validate and try to get ticker for display
-if not cik or len(cik) != 10:
-st.error(“Invalid CIK format. CIK should be 10 digits.”)
-st.stop()
-# Try to get ticker symbol for better display
-found_ticker = get_ticker_from_cik(cik)
-ticker = found_ticker if found_ticker else f”CIK-{cik}”
+st.info(f”Using ticker {ticker} (CIK: {cik})”)
 
 ```
     # Get the selected model ID from the dropdown
     model_id = openai_models[selected_model]
-    
+
     # Initialize the OpenAI client
     client = OpenAI(api_key=api_key)
     
@@ -626,7 +680,7 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
     results = []
 
     for date_str, acc, url in links:
-        st.write(f"Processing {url}")
+        st.write(f"📄 Processing {url}")
         try:
             html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
             soup = BeautifulSoup(html, "html.parser")
@@ -639,12 +693,12 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
             
             # Check if we found any guidance paragraphs
             if found_guidance:
-                st.success(f"Found potential guidance information.")
+                st.success(f"✅ Found potential guidance information.")
                 
                 # Extract guidance from the highlighted text using the selected model
                 table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
             else:
-                st.warning(f"No guidance paragraphs found. Trying with a sample of the document.")
+                st.warning(f"⚠️ No guidance paragraphs found. Trying with a sample of the document.")
                 # Use a sample of the document to reduce token usage
                 sample_text = "DOCUMENT TYPE: SEC 8-K Earnings Release for " + ticker + "\n\n"
                 paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
@@ -675,16 +729,16 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
                     df["filing_url"] = url
                     df["model_used"] = selected_model
                     results.append(df)
-                    st.success("Guidance extracted from this 8-K.")
+                    st.success("✅ Guidance extracted from this 8-K.")
                 else:
-                    st.warning(f"Table format was detected but no data rows were found in {url}")
+                    st.warning(f"⚠️ Table format was detected but no data rows were found in {url}")
                     
                     # Show a sample of the text to help debug
                     st.write("Sample of text sent to OpenAI:")
                     sample_length = min(500, len(guidance_paragraphs))
                     st.text(guidance_paragraphs[:sample_length] + "..." if len(guidance_paragraphs) > sample_length else guidance_paragraphs)
             else:
-                st.warning(f"No guidance table found in {url}")
+                st.warning(f"⚠️ No guidance table found in {url}")
                 
                 # Show a sample of the text to help debug
                 st.write("Sample of text sent to OpenAI:")
@@ -712,7 +766,7 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
         }
         
         # Preview the table
-        st.subheader("Preview of Extracted Guidance")
+        st.subheader("🔍 Preview of Extracted Guidance")
         
         # Select the most relevant columns for display
         display_cols = ['metric', 'value_or_range', 'period', 'period_type', 'low', 'high', 'average', 'filing_date']
@@ -732,7 +786,7 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
         excel_df = combined.rename(columns={c: display_rename.get(c, c) for c in combined.columns})
         excel_df.to_excel(excel_buffer, index=False)
         
-        st.download_button("Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("📥 Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     else:
         st.warning("No guidance data extracted.")
 ```
