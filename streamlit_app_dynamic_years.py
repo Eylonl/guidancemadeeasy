@@ -493,13 +493,14 @@ if st.button("Extract Guidance"):
         links = get_ex99_1_links(cik, accessions)
         results = []
 
-        for date_str, acc, url in links:
+                for date_str, acc, url in links:
             st.write(f"Processing {url}")
             try:
                 html = requests.get(url, headers={"User-Agent": "MyCompanyName Data Research Contact@mycompany.com"}).text
                 soup = BeautifulSoup(html, "html.parser")
                 text = soup.get_text(" ", strip=True)
                 guidance_paragraphs, found_guidance = find_guidance_paragraphs(text)
+
                 if found_guidance:
                     st.success(f"Found potential guidance information.")
                     table = extract_guidance(guidance_paragraphs, ticker, client, model_id)
@@ -509,17 +510,20 @@ if st.button("Extract Guidance"):
                     paragraphs = re.split(r'\n\s*\n|\.\s+(?=[A-Z])', text)
                     sample_text += "\n\n".join(paragraphs[:15])
                     table = extract_guidance(sample_text, ticker, client, model_id)
+
                 if table and "|" in table:
                     rows = [r.strip().split("|")[1:-1] for r in table.strip().split("\n") if "|" in r]
                     if len(rows) > 1:
                         column_names = [c.strip().lower().replace(' ', '_') for c in rows[0]]
                         df = pd.DataFrame(rows[1:], columns=column_names)
                         df = format_guidance_values(df)
+
                         if 'value_or_range' in df.columns:
                             df = split_gaap_non_gaap(df.rename(columns={'value_or_range': 'Value or range'}))
                             if 'Value or range' in df.columns:
                                 df.rename(columns={'Value or range': 'value_or_range'}, inplace=True)
-                                                df["filing_date"] = date_str
+
+                        df["filing_date"] = date_str
                         df["filing_url"] = url
                         df["model_used"] = selected_model
                         results.append(df)
@@ -542,13 +546,13 @@ if st.button("Extract Guidance"):
             display_rename = {
                 'metric': 'Metric',
                 'value_or_range': 'Value or Range',
-                'period': 'Period', 
+                'period': 'Period',
                 'period_type': 'Period Type',
                 'low': 'Low',
-                'high': 'High', 
+                'high': 'High',
                 'average': 'Average',
                 'filing_date': 'Filing Date',
-                'filing_url': 'Filing URL', 
+                'filing_url': 'Filing URL',
                 'model_used': 'Model Used'
             }
             st.subheader("Preview of Extracted Guidance")
@@ -560,7 +564,11 @@ if st.button("Extract Guidance"):
             excel_buffer = io.BytesIO()
             excel_df = combined.rename(columns={c: display_rename.get(c, c) for c in combined.columns})
             excel_df.to_excel(excel_buffer, index=False)
-            st.download_button("Download Excel", data=excel_buffer.getvalue(), file_name=f"{ticker}_guidance_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download Excel",
+                data=excel_buffer.getvalue(),
+                file_name=f"{ticker}_guidance_output.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         else:
             st.warning("No guidance data extracted.")
-
