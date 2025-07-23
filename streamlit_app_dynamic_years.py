@@ -454,7 +454,7 @@ else:
 return accessions
 ```
 
-# This is Part 3a - Add this after Part 2
+# This is Part 3A - Add this after Part 2
 
 def get_ex99_1_links(cik, accessions):
 “”“Enhanced function to find exhibit 99.1 files with better searching”””
@@ -787,4 +787,3 @@ ticker = found_ticker if found_ticker else f”CIK-{cik}”
     else:
         st.warning("No guidance data extracted.")
 ```
-             
