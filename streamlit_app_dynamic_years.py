@@ -8,185 +8,148 @@ import os
 import re
 
 def format_percent(val):
-# Format a value as a percentage with consistent decimal places
-if val is None:
-return None
-if isinstance(val, (int, float)):
-return f”{val:.1f}%”
-return val
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return f"{val:.1f}%"
+    return val
 
 def format_dollar(val):
-# Format a value as a dollar amount with consistent decimal places
-if val is None:
-return None
-if isinstance(val, (int, float)):
-# Use different formatting based on value magnitude
-if abs(val) >= 100:  # Large values, use whole numbers
-return f”${val:.0f}”
-elif abs(val) >= 10:  # Medium values, use 1 decimal place
-return f”${val:.1f}”
-else:  # Small values, use 2 decimal places
-return f”${val:.2f}”
-return val
-
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        if abs(val) >= 100:
+            return f"${val:.0f}"
+        elif abs(val) >= 10:
+            return f"${val:.1f}"
+        else:
+            return f"${val:.2f}"
+    return val
+    
 def extract_guidance(text, ticker, client, model_name):
-# Enhanced function to extract guidance from SEC filings
-prompt = f””“You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}.
+    prompt = f"""You are a financial analyst assistant. Extract ALL forward-looking guidance, projections, and outlook statements given in this earnings release for {ticker}. 
 
 Return a structured table containing the following columns:
-
 - metric (e.g. Revenue, EPS, Operating Margin)
 - value_or_range (e.g. $1.5B–$1.6B or $2.05 or $(0.05) to $0.10 - EXACTLY as it appears in the text)
 - period (e.g. Q3 FY24, Full Year 2025)
-- period_type (MUST be either “Quarter” or “Full Year” based on the period text)
+- period_type (MUST be either "Quarter" or "Full Year" based on the period text)
 - low (numeric low end of the range, or the single value if not a range)
 - high (numeric high end of the range, or the single value if not a range)
 - average (average of low and high, or just the value if not a range)
 
 VERY IMPORTANT:
-
-- Look for sections titled ‘Outlook’, ‘Guidance’, ‘Financial Outlook’, ‘Business Outlook’, or similar
-- Also look for statements containing phrases like “expect”, “anticipate”, “forecast”, “will be”, “to be in the range of”
+- Look for sections titled 'Outlook', 'Guidance', 'Financial Outlook', 'Business Outlook', or similar
+- Also look for statements containing phrases like "expect", "anticipate", "forecast", "will be", "to be in the range of"
 - Review the ENTIRE document for ANY forward-looking statements about future performance
-- Pay special attention to sections describing “For the fiscal quarter”, “For the fiscal year”, “For next quarter”, etc.
+- Pay special attention to sections describing "For the fiscal quarter", "For the fiscal year", "For next quarter", etc.
 
 CRITICAL GUIDANCE FOR THE NUMERIC COLUMNS (low, high, average):
-
-- For low, high, and average columns, provide ONLY numeric values (no $ signs, no % symbols, no “million” or “billion” text)
-- Use negative numbers for negative values: -1 instead of “(1)” and -5 instead of “(5%)”
-- For mixed sign ranges like “$(1) million to $1 million”, make sure low is negative (-1) and high is positive (1)
+- For low, high, and average columns, provide ONLY numeric values (no $ signs, no % symbols, no "million" or "billion" text)
+- Use negative numbers for negative values: -1 instead of "(1)" and -5 instead of "(5%)"
+- For mixed sign ranges like "$(1) million to $1 million", make sure low is negative (-1) and high is positive (1)
 - Convert all billions to millions (multiply by 1000): $1.2 billion → 1200
-- For percentages, just give the number without % sign: “5% to 7%” → low=5, high=7
-- For dollar amounts, omit the $ sign: “$0.05 to $0.10” → low=0.05, high=0.10
+- For percentages, just give the number without % sign: "5% to 7%" → low=5, high=7
+- For dollar amounts, omit the $ sign: "$0.05 to $0.10" → low=0.05, high=0.10
 
 FOR THE PERIOD TYPE COLUMN:
-
-- Classify each period as either “Quarter” or “Full Year” based on the applicable period
-- Use “Quarter” for: Q1, Q2, Q3, Q4, First Quarter, Next Quarter, Current Quarter, etc.
-- Use “Full Year” for: Full Year, Fiscal Year, FY, Annual, Year Ending, etc.
-- If a period just mentions a year (e.g., “2023” or “FY24”) without specifying a quarter, classify it as “Full Year”
-- THIS COLUMN IS REQUIRED AND MUST ONLY CONTAIN “Quarter” OR “Full Year” - NO OTHER VALUES
+- Classify each period as either "Quarter" or "Full Year" based on the applicable period
+- Use "Quarter" for: Q1, Q2, Q3, Q4, First Quarter, Next Quarter, Current Quarter, etc.
+- Use "Full Year" for: Full Year, Fiscal Year, FY, Annual, Year Ending, etc.
+- If a period just mentions a year (e.g., "2023" or "FY24") without specifying a quarter, classify it as "Full Year"
+- THIS COLUMN IS REQUIRED AND MUST ONLY CONTAIN "Quarter" OR "Full Year" - NO OTHER VALUES
 
 FORMATTING INSTRUCTIONS FOR VALUE_OR_RANGE COLUMN:
-
 - Always preserve the original notation exactly as it appears in the document (maintain parentheses, $ signs, % symbols)
-- Example: If document says “($0.05) to $0.10”, use exactly “($0.05) to $0.10” in value_or_range column
-- Example: If document says “(5%) to 2%”, use exactly “(5%) to 2%” in value_or_range column
-- For billion values, keep them as billions in this column: “$1.10 billion to $1.11 billion”
+- Example: If document says "($0.05) to $0.10", use exactly "($0.05) to $0.10" in value_or_range column
+- Example: If document says "(5%) to 2%", use exactly "(5%) to 2%" in value_or_range column
+- For billion values, keep them as billions in this column: "$1.10 billion to $1.11 billion"
 
-Respond in table format without commentary.\n\n{text}”””
-
-```
-try:
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-    )
-    return response.choices[0].message.content
-except Exception as e:
-    st.warning(f"Error extracting guidance: {str(e)}")
-    return None
-```
+Respond in table format without commentary.\n\n{text}"""
+    
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.warning(f"Error extracting guidance: {str(e)}")
+        return None
 
 def split_gaap_non_gaap(df):
-# Split rows that contain both GAAP and non-GAAP guidance into separate rows
-if ‘value_or_range’ not in df.columns or ‘metric’ not in df.columns:
-return df  # Avoid crash if column names are missing
+    if 'value_or_range' not in df.columns or 'metric' not in df.columns:
+        return df
 
-```
-rows = []
-for _, row in df.iterrows():
-    val = str(row['value_or_range'])
-    match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
-    if match:
-        gaap_val = match.group(1).strip() + " GAAP"
-        non_gaap_val = match.group(2).strip() + " non-GAAP"
-        for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
-            new_row = row.copy()
-            new_row["value_or_range"] = new_val
-            new_row["metric"] = f"{row['metric']} ({label})"
-            rows.append(new_row)
-    else:
-        rows.append(row)
-return pd.DataFrame(rows)
-```
+    rows = []
+    for _, row in df.iterrows():
+        val = str(row['value_or_range'])
+        match = re.search(r'(\d[\d\.\s%to–-]*)\s*on a GAAP basis.*?(\d[\d\.\s%to–-]*)\s*on a non-GAAP basis', val, re.I)
+        if match:
+            gaap_val = match.group(1).strip() + " GAAP"
+            non_gaap_val = match.group(2).strip() + " non-GAAP"
+            for new_val, label in [(gaap_val, "GAAP"), (non_gaap_val, "Non-GAAP")]:
+                new_row = row.copy()
+                new_row["value_or_range"] = new_val
+                new_row["metric"] = f"{row['metric']} ({label})"
+                rows.append(new_row)
+        else:
+            rows.append(row)
+    return pd.DataFrame(rows)
 
 def format_guidance_values(df):
-# Format the numeric values to appropriate formats based on the metric and value types
-# Make a copy to avoid modifying the original
-formatted_df = df.copy()
-
-```
-for idx, row in df.iterrows():
-    value_text = str(row.get('value_or_range', ''))
+    formatted_df = df.copy()
     
-    # Determine if it's a percentage value
-    is_percentage = '%' in value_text
+    for idx, row in df.iterrows():
+        value_text = str(row.get('value_or_range', ''))
+        is_percentage = '%' in value_text
+        is_dollar = '$' in value_text
+        
+        for col in ['low', 'high', 'average']:
+            if col in df.columns and not pd.isnull(row.get(col)):
+                try:
+                    val = float(row[col])
+                    
+                    if is_percentage:
+                        formatted_df.at[idx, col] = f"{val:.1f}%"
+                    elif is_dollar:
+                        if abs(val) >= 100:
+                            formatted_df.at[idx, col] = f"${val:.0f}"
+                        elif abs(val) >= 10:
+                            formatted_df.at[idx, col] = f"${val:.1f}"
+                        else:
+                            formatted_df.at[idx, col] = f"${val:.2f}"
+                except:
+                    continue
     
-    # Determine if it's a dollar value
-    is_dollar = '$' in value_text
-    
-    # Format the Low, High, Average columns based on the value type
-    for col in ['low', 'high', 'average']:
-        if col in df.columns and not pd.isnull(row.get(col)):
-            try:
-                val = float(row[col])
-                
-                if is_percentage:
-                    formatted_df.at[idx, col] = f"{val:.1f}%"
-                elif is_dollar:
-                    if abs(val) >= 100:
-                        formatted_df.at[idx, col] = f"${val:.0f}"
-                    elif abs(val) >= 10:
-                        formatted_df.at[idx, col] = f"${val:.1f}"
-                    else:
-                        formatted_df.at[idx, col] = f"${val:.2f}"
-            except:
-                # Skip if we can't parse as float
-                continue
+    return formatted_df
 
-return formatted_df
-```
+st.set_page_config(page_title="SEC 8-K Guidance Extractor", layout="centered")
+st.title("SEC 8-K Guidance Extractor")
 
-# Streamlit App Setup
+input_method = st.radio("Choose input method:", ["Ticker Symbol", "CIK Code"])
 
-st.set_page_config(page_title=“SEC 8-K Guidance Extractor”, layout=“centered”)
-st.title(“SEC 8-K Guidance Extractor”)
-
-# Modified inputs section to support both ticker and CIK
-
-input_method = st.radio(“Choose input method:”, [“Ticker Symbol”, “CIK Code”])
-
-if input_method == “Ticker Symbol”:
-identifier = st.text_input(“Enter Stock Ticker (e.g., MSFT, ORCL)”, “MSFT”).upper()
-ticker = identifier  # For display purposes
-cik = None  # Will be looked up
+if input_method == "Ticker Symbol":
+    identifier = st.text_input("Enter Stock Ticker (e.g., MSFT, ORCL)", "MSFT").upper()
+    ticker = identifier
+    cik = None
 else:
-identifier = st.text_input(“Enter CIK Code (e.g., 0000789019)”, “”)
-ticker = identifier  # Will use CIK as ticker for display
-cik = identifier.zfill(10) if identifier else None  # Pad with zeros to 10 digits
+    identifier = st.text_input("Enter CIK Code (e.g., 0000789019)", "")
+    ticker = identifier
+    cik = identifier.zfill(10) if identifier else None
 
-api_key = st.text_input(“Enter OpenAI API Key”, type=“password”)
-
-# Add model selection dropdown
+api_key = st.text_input("Enter OpenAI API Key", type="password")
 
 openai_models = {
-“GPT-4 Turbo”: “gpt-4-turbo-preview”,
-“GPT-4”: “gpt-4”,
-“GPT-3.5 Turbo”: “gpt-3.5-turbo”
+    "GPT-4 Turbo": "gpt-4-turbo-preview",
+    "GPT-4": "gpt-4",
+    "GPT-3.5 Turbo": "gpt-3.5-turbo"
 }
-selected_model = st.selectbox(
-“Select OpenAI Model”,
-list(openai_models.keys()),
-index=0  # Default to first option (GPT-4 Turbo)
-)
+selected_model = st.selectbox("Select OpenAI Model", list(openai_models.keys()), index=0)
 
-# Both filter options displayed at the same time
-
-year_input = st.text_input(“How many years back to search for 8-K filings? (Leave blank for most recent only)”, “”)
-quarter_input = st.text_input(“OR enter specific quarter (e.g., 2Q25, Q4FY24)”, “”)
-
+year_input = st.text_input("How many years back to search for 8-K filings? (Leave blank for most recent only)", "")
+quarter_input = st.text_input("OR enter specific quarter (e.g., 2Q25, Q4FY24)", "")
         # This is Part 2 - Add this after Part 1
 
 @st.cache_data(show_spinner=False)
